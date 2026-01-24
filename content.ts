@@ -1068,81 +1068,95 @@ async function clickBatchPrintLabelButton() {
     return false
   }
 
-  printButton.click()
-  console.log('[Content] 已点击批量打印商品打包标签按钮')
-  
-  // 等待一小段时间，检查是否有警告弹窗出现
-  await sleep(1000)
-  
-  // 检查是否有警告弹窗（"部分发货单已打印过打包标签"）
-  const modalWrapper = document.querySelector('div[data-testid="beast-core-modal-innerWrapper"]')
-  if (modalWrapper) {
-    const modalText = modalWrapper.textContent || ''
-    if (modalText.includes('部分发货单已打印过打包标签') || modalText.includes('不支持批量打印')) {
-      console.log('[Content] 检测到警告弹窗，准备点击"我知道了"按钮')
+    printButton.click()
+    console.log('[Content] 已点击批量打印商品打包标签按钮')
+    
+    // 等待弹窗出现
+    await sleep(1000)
+    
+    // 检查是否有弹窗出现
+    let hasClickedContinuePrint = false
+    const modalWrapper = document.querySelector('div[data-testid="beast-core-modal-innerWrapper"]')
+    
+    if (modalWrapper) {
+      const modalText = modalWrapper.textContent || ''
+      console.log('[Content] 检测到弹窗，弹窗文本:', modalText.substring(0, 200))
       
-      // 查找"我知道了"按钮
-      const knowButton = await findButtonByText(
-        'button[data-testid="beast-core-button"]',
-        '我知道了',
-        {
-          timeout: 5000,
-          interval: 200,
-          parent: modalWrapper as Element
+      // 情况1：警告弹窗（"部分发货单已打印过打包标签"）
+      if (modalText.includes('部分发货单已打印过打包标签') || modalText.includes('不支持批量打印')) {
+        console.log('[Content] 检测到警告弹窗，准备点击"我知道了"按钮')
+        
+        // 查找"我知道了"按钮
+        const knowButton = await findButtonByText(
+          'button[data-testid="beast-core-button"]',
+          '我知道了',
+          {
+            timeout: 5000,
+            interval: 200,
+            parent: modalWrapper as Element
+          }
+        )
+        
+        if (knowButton) {
+          knowButton.click()
+          console.log('[Content] 已点击"我知道了"按钮')
+          await sleep(1000)
+          return true
+        } else {
+          console.warn('[Content] 未找到"我知道了"按钮')
         }
-      )
-      
-      if (knowButton) {
-        knowButton.click()
-        console.log('[Content] 已点击"我知道了"按钮')
-        await sleep(1000)
-        return true
-      } else {
-        console.warn('[Content] 未找到"我知道了"按钮')
       }
+      
+      // 情况2：打印顺序选择弹窗（"已选1个发货单，请选择打包标签打印顺序"）
+      if (modalText.includes('已选') && modalText.includes('个发货单') && modalText.includes('请选择打包标签打印顺序')) {
+        console.log('[Content] 检测到打印顺序选择弹窗，准备点击"继续打印"按钮')
+        
+        // 查找"继续打印"按钮
+        const continuePrintButton = await findButtonByText(
+          'button[data-testid="beast-core-button"]',
+          '继续打印',
+          {
+            timeout: 5000,
+            interval: 200,
+            parent: modalWrapper as Element
+          }
+        )
+        
+        if (continuePrintButton) {
+          console.log('[Content] 找到"继续打印"按钮，准备点击...')
+          continuePrintButton.click()
+          console.log('[Content] 已点击"继续打印"按钮，系统将自动触发打印事件')
+          hasClickedContinuePrint = true
+          await sleep(3000) // 等待3秒，让系统打印弹窗完全出现
+          console.log('[Content] 系统打印弹窗应该已出现，准备刷新页面关闭...')
+          
+          // 刷新页面来关闭系统打印弹窗
+          console.log('[Content] 刷新页面来关闭系统打印弹窗...')
+          window.location.reload()
+          
+          console.log('[Content] 已刷新页面')
+          return true
+        } else {
+          console.warn('[Content] 未找到"继续打印"按钮')
+        }
+      }
+    } else {
+      console.log('[Content] 未检测到任何弹窗')
     }
-  }
-  
-  // 如果没有警告弹窗，等待3秒后关闭打印弹窗
-  await sleep(3000)
-  
-  // 关闭打印弹窗（通过发送ESC键事件）
-  console.log('[Content] 关闭打印弹窗...')
-  const escEvent = new KeyboardEvent('keydown', {
-    key: 'Escape',
-    code: 'Escape',
-    keyCode: 27,
-    which: 27,
-    bubbles: true,
-    cancelable: true
-  })
-  window.dispatchEvent(escEvent)
-  
-  // 也尝试发送keyup事件
-  const escKeyUpEvent = new KeyboardEvent('keyup', {
-    key: 'Escape',
-    code: 'Escape',
-    keyCode: 27,
-    which: 27,
-    bubbles: true,
-    cancelable: true
-  })
-  window.dispatchEvent(escKeyUpEvent)
-  
-  // 也尝试发送keypress事件
-  const escKeyPressEvent = new KeyboardEvent('keypress', {
-    key: 'Escape',
-    code: 'Escape',
-    keyCode: 27,
-    which: 27,
-    bubbles: true,
-    cancelable: true
-  })
-  window.dispatchEvent(escKeyPressEvent)
-  
-  console.log('[Content] 已尝试关闭打印弹窗')
-  await sleep(500)
-  return true
+    
+    // 只有在没有点击"继续打印"按钮的情况下，才执行关闭打印弹窗的逻辑
+    if (!hasClickedContinuePrint) {
+      console.log('[Content] 等待3秒后刷新页面来关闭打印弹窗...')
+      await sleep(3000)
+      
+      // 刷新页面来关闭系统打印弹窗
+      console.log('[Content] 刷新页面来关闭系统打印弹窗...')
+      window.location.reload()
+      
+      console.log('[Content] 已刷新页面')
+    }
+    
+    return true
 }
 
 /**
@@ -1901,13 +1915,18 @@ async function executeShipmentStepsDirectly(config: { warehouse: string; shippin
     printButton.click()
     console.log('[Content] 已点击批量打印商品打包标签按钮')
     
-    // 等待一小段时间，检查是否有警告弹窗出现
+    // 等待弹窗出现
     await sleep(1000)
     
-    // 检查是否有警告弹窗（"部分发货单已打印过打包标签，不支持批量打印"）
+    // 检查是否有弹窗出现
+    let hasClickedContinuePrint = false
     const modalWrapper = document.querySelector('div[data-testid="beast-core-modal-innerWrapper"]')
+    
     if (modalWrapper) {
       const modalText = modalWrapper.textContent || ''
+      console.log('[Content] 检测到弹窗，弹窗文本:', modalText.substring(0, 200))
+      
+      // 情况1：警告弹窗（"部分发货单已打印过打包标签，不支持批量打印"）
       if (modalText.includes('部分发货单已打印过打包标签') || modalText.includes('不支持批量打印')) {
         console.log('[Content] 检测到警告弹窗：已打印过，准备点击"我知道了"按钮')
         
@@ -1937,49 +1956,88 @@ async function executeShipmentStepsDirectly(config: { warehouse: string; shippin
           console.warn('[Content] 未找到"我知道了"按钮')
         }
       }
+      
+      // 情况2：打印顺序选择弹窗（"已选1个发货单，请选择打包标签打印顺序"）
+      if (modalText.includes('已选') && modalText.includes('个发货单') && modalText.includes('请选择打包标签打印顺序')) {
+        console.log('[Content] 检测到打印顺序选择弹窗，准备点击"继续打印"按钮')
+        
+        // 查找"继续打印"按钮
+        const continuePrintButton = await findButtonByText(
+          'button[data-testid="beast-core-button"]',
+          '继续打印',
+          {
+            timeout: 5000,
+            interval: 200,
+            parent: modalWrapper as Element
+          }
+        )
+        
+        if (continuePrintButton) {
+          console.log('[Content] 找到"继续打印"按钮，准备点击...')
+          continuePrintButton.click()
+          console.log('[Content] 已点击"继续打印"按钮，系统将自动触发打印事件')
+          hasClickedContinuePrint = true
+          await sleep(3000) // 等待3秒，让系统打印弹窗完全出现
+          console.log('[Content] 系统打印弹窗应该已出现，准备刷新页面关闭...')
+          
+          // 刷新页面来关闭系统打印弹窗
+          console.log('[Content] 刷新页面来关闭系统打印弹窗...')
+          window.location.reload()
+          
+          console.log('[Content] 已刷新页面，等待background继续执行后续步骤...')
+          return
+        } else {
+          console.warn('[Content] 未找到"继续打印"按钮')
+        }
+      }
+    } else {
+      console.log('[Content] 未检测到任何弹窗')
     }
     
-    // 如果没有警告弹窗，说明出现了系统打印弹窗
-    // 等待5秒，让打印弹窗出现（打印弹窗出现较慢）
-    console.log('[Content] 未检测到警告弹窗，等待5秒让系统打印弹窗出现...')
-    await sleep(5000)
+    // 只有在没有点击"继续打印"按钮的情况下，才执行刷新页面的逻辑
+    if (!hasClickedContinuePrint) {
+      // 如果没有警告弹窗，说明出现了系统打印弹窗
+      // 等待5秒，让打印弹窗出现（打印弹窗出现较慢）
+      console.log('[Content] 未检测到打印顺序弹窗，等待5秒让系统打印弹窗出现...')
+      await sleep(5000)
     
-    // 生成唯一标识，用于区分系统刷新和用户主动刷新
-    const refreshId = `refresh_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-    console.log('[Content] 生成刷新标识:', refreshId)
-    
-    // 在刷新前，保存标志到storage，标记这是系统触发的刷新
-    await chrome.storage.local.set({
-      shouldContinueAfterRefresh: {
-        refreshId: refreshId,
-        tabId: null, // background会设置
-        warehouse: config.warehouse,
-        shippingMethod: config.shippingMethod,
-        timestamp: Date.now()
-      }
-    })
-    console.log('[Content] 已保存刷新标志到storage')
-    
-    // 先发送消息到background，通知刷新页面后继续执行
-    console.log('[Content] 发送消息到background，通知刷新页面后继续执行...')
-    chrome.runtime.sendMessage({
-      type: 'CONTINUE_AFTER_PRINT_REFRESH',
-      data: {
-        refreshId: refreshId,
-        warehouse: config.warehouse,
-        shippingMethod: config.shippingMethod,
-        url: window.location.href
-      }
-    }).catch((error) => {
-      console.error('[Content] 发送消息到background失败:', error)
-    })
-    
-    // 等待1秒后刷新页面来关闭打印弹窗
-    console.log('[Content] 等待1秒后刷新页面来关闭打印弹窗...')
-    await sleep(1000)
-    window.location.reload()
-    
-    console.log('[Content] ============== 已刷新页面，等待background继续执行 =============')
+      // 生成唯一标识，用于区分系统刷新和用户主动刷新
+      const refreshId = `refresh_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+      console.log('[Content] 生成刷新标识:', refreshId)
+      
+      // 在刷新前，保存标志到storage，标记这是系统触发的刷新
+      await chrome.storage.local.set({
+        shouldContinueAfterRefresh: {
+          refreshId: refreshId,
+          tabId: null, // background会设置
+          warehouse: config.warehouse,
+          shippingMethod: config.shippingMethod,
+          timestamp: Date.now()
+        }
+      })
+      console.log('[Content] 已保存刷新标志到storage')
+      
+      // 先发送消息到background，通知刷新页面后继续执行
+      console.log('[Content] 发送消息到background，通知刷新页面后继续执行...')
+      chrome.runtime.sendMessage({
+        type: 'CONTINUE_AFTER_PRINT_REFRESH',
+        data: {
+          refreshId: refreshId,
+          warehouse: config.warehouse,
+          shippingMethod: config.shippingMethod,
+          url: window.location.href
+        }
+      }).catch((error) => {
+        console.error('[Content] 发送消息到background失败:', error)
+      })
+      
+      // 等待1秒后刷新页面来关闭打印弹窗
+      console.log('[Content] 等待1秒后刷新页面来关闭打印弹窗...')
+      await sleep(1000)
+      window.location.reload()
+      
+      console.log('[Content] ============== 已刷新页面，等待background继续执行 =============')
+    }
 
     // 后面的步骤暂时不执行，用于测试
     // // 步骤4: 点击"批量装箱发货"按钮
