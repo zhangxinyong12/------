@@ -13,16 +13,18 @@ const { Title } = Typography
 const { Option } = Select
 
 // 发货仓库选项
+// value和label保持一致，便于理解和使用
 const WAREHOUSE_OPTIONS = [
-  { label: "莆田仓库", value: "putian" },
-  { label: "义乌仓库", value: "yiwu" }
+  { label: "莆田仓库", value: "莆田仓库" },
+  { label: "义乌仓库", value: "义乌仓库" }
 ]
 
 // 发货方式选项
+// value和label保持一致，便于理解和使用
 const SHIPPING_METHOD_OPTIONS = [
-  { label: "自送", value: "self_delivery" },
-  { label: "自行委托第三方物流", value: "third_party_logistics" },
-  { label: "在线物流下单", value: "online_logistics" }
+  { label: "自送", value: "自送" },
+  { label: "自行委托第三方物流", value: "自行委托第三方物流" },
+  { label: "在线物流下单", value: "在线物流下单" }
 ]
 
 // 表单数据类型定义
@@ -38,29 +40,58 @@ const PopupPage: React.FC = () => {
   /**
    * 处理表单提交
    * 开始批量自动发货
+   * 保存用户配置到 background，并打开新窗口
    */
   const handleSubmit = async (values: ShipmentFormData) => {
-    console.log("表单提交数据:", values)
     setLoading(true)
 
     try {
-      // TODO: 在这里实现批量自动发货的逻辑
-      // 1. 获取待发货订单列表
-      // 2. 根据选择的仓库和发货方式批量处理订单
-      // 3. 更新订单状态
+      // 发送消息到 background，保存配置并打开新窗口
+      const response = await chrome.runtime.sendMessage({
+        type: "SAVE_CONFIG_AND_OPEN_URL",
+        data: {
+          warehouse: values.warehouse,
+          shippingMethod: values.shippingMethod,
+          url: "https://agentseller.temu.com/stock/fully-mgt/order-manage-urgency"
+        }
+      })
 
-      // 模拟异步操作
-      await new Promise((resolve) => setTimeout(resolve, 1000))
-
-      message.success("批量自动发货已开始！")
-      console.log("发货仓库:", values.warehouse)
-      console.log("发货方式:", values.shippingMethod)
-
-      // 提交成功后可以重置表单（可选）
-      // form.resetFields()
-    } catch (error) {
-      console.error("批量自动发货失败:", error)
-      message.error("批量自动发货失败，请重试")
+      if (response && response.success) {
+        message.success("配置已保存，正在打开页面...")
+      } else {
+        const errorMsg = response?.error || "操作失败，未收到有效响应"
+        throw new Error(errorMsg)
+      }
+    } catch (error: any) {
+      // 如果消息发送失败，可能是 background script 未加载，尝试直接打开窗口
+      const errorMessage = error?.message || chrome.runtime.lastError?.message || "操作失败"
+      const isConnectionError = errorMessage.includes("Could not establish connection") || 
+                                 errorMessage.includes("Extension context invalidated") ||
+                                 chrome.runtime.lastError
+      
+      if (isConnectionError) {
+        try {
+          await chrome.windows.create({
+            url: "https://agentseller.temu.com/stock/fully-mgt/order-manage-urgency",
+            type: "normal",
+            focused: true
+          })
+          // 尝试保存配置
+          await chrome.storage.local.set({
+            userConfig: {
+              warehouse: values.warehouse,
+              shippingMethod: values.shippingMethod
+            }
+          })
+          message.success("页面已打开，配置已保存")
+        } catch (directError: any) {
+          console.error("[Popup] 直接打开窗口失败:", directError)
+          message.error(`无法打开页面: ${directError?.message || "请检查插件权限"}`)
+        }
+      } else {
+        console.error("[Popup] 批量自动发货失败:", error)
+        message.error(`操作失败: ${errorMessage}`)
+      }
     } finally {
       setLoading(false)
     }
@@ -68,7 +99,6 @@ const PopupPage: React.FC = () => {
 
   return (
     <div className="w-[400px] p-4">
-      <Card>
         <Space direction="vertical" size="middle" style={{ width: "100%" }}>
           {/* 标题 */}
           <div className="text-center">
@@ -82,7 +112,11 @@ const PopupPage: React.FC = () => {
             form={form}
             layout="vertical"
             onFinish={handleSubmit}
-            autoComplete="off">
+            autoComplete="off"
+            initialValues={{
+              warehouse: "义乌仓库", // 默认选择义乌仓库
+              shippingMethod: "自送" // 默认选择自送方式
+            }}>
             {/* 发货仓库选择 */}
             <Form.Item
               label="发货仓库"
@@ -133,7 +167,6 @@ const PopupPage: React.FC = () => {
             </Form.Item>
           </Form>
         </Space>
-      </Card>
     </div>
   )
 }

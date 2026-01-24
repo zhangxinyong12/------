@@ -1,8 +1,8 @@
 {
   "name": "douyin-auto-shipment",
-  "displayName": "抖音自动发货插件",
+  "displayName": "自动发货插件",
   "version": "0.1.0",
-  "description": "抖音自动发货插件 - 批量自动发货工具",
+  "description": "自动发货插件 - 批量自动发货工具",
   "author": "",
   "scripts": {
     "dev": "cross-env PLASMO_PUBLIC_ENV=development plasmo dev",
@@ -36,8 +36,8 @@
     "typescript": "5.3.3"
   },
   "manifest": {
-    "name": "抖音自动发货插件",
-    "description": "抖音自动发货插件 - 批量自动发货工具",
+    "name": "自动发货插件",
+    "description": "自动发货插件 - 批量自动发货工具",
     "host_permissions": [
       "http://*/*",
       "https://*/*"
