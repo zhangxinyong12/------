@@ -18,6 +18,7 @@ SKU里的图片 下载或者暂缓
 然后自动跳转到页面  https://seller.kuajingmaihuo.com/main/order-manager/shipping-desk/create
 选择 批量选择 选择义乌仓库  （收录一下已有的仓库地址，（莆田仓库/义乌仓库等。。。）在插件开头，手动选择
  下一步 确认创建 
+ https://seller.kuajingmaihuo.com/main/order-manager/shipping-list
 然后 刷新 看到待装箱发货
 然后要全部勾选 点击批量打印商品打包标签  
 再次点击 批量装箱发货 ----*发货方式

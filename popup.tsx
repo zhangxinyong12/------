@@ -38,6 +38,58 @@ const PopupPage: React.FC = () => {
   const [loading, setLoading] = useState(false)
 
   /**
+   * 直接执行发货步骤（开发阶段测试用）
+   * 跳过前面的步骤，直接执行发货操作
+   * 
+   * 注意：这是开发阶段的功能，用于测试发货步骤
+   * 正式版本应该从第一步开始执行完整流程
+   */
+  const handleDirectShipment = async () => {
+    setLoading(true)
+
+    try {
+      // 获取当前活动标签页
+      const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true })
+      
+      if (!activeTab || !activeTab.id) {
+        throw new Error('无法获取当前标签页')
+      }
+
+      // 检查当前页面是否是shipping-list页面
+      const currentUrl = activeTab.url || ''
+      if (!currentUrl.includes('seller.kuajingmaihuo.com') || !currentUrl.includes('/main/order-manager/shipping-list')) {
+        message.warning('请先打开发货单列表页面（shipping-list）')
+        setLoading(false)
+        return
+      }
+
+      // 获取表单值
+      const values = form.getFieldsValue()
+      
+      // 发送消息到content script，直接执行发货步骤
+      const response = await chrome.tabs.sendMessage(activeTab.id, {
+        type: 'START_SHIPMENT_STEPS_DIRECTLY',
+        data: {
+          warehouse: values.warehouse || '义乌仓库',
+          shippingMethod: values.shippingMethod || '自送'
+        }
+      })
+
+      if (response && response.success) {
+        message.success('已开始执行发货步骤')
+      } else {
+        throw new Error('执行失败，未收到有效响应')
+      }
+    } catch (error: any) {
+      const errorMessage = error?.message || chrome.runtime.lastError?.message || '操作失败'
+      console.error('[Popup] 直接执行发货步骤失败:', error)
+      message.error(`操作失败: ${errorMessage}`)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  /**
    * 处理表单提交
    * 开始批量自动发货
    * 保存用户配置到 background，并打开新窗口
@@ -168,6 +220,19 @@ const PopupPage: React.FC = () => {
                 block
                 size="large">
                 开始批量自动发货
+              </Button>
+            </Form.Item>
+
+            {/* 直接执行发货步骤按钮（开发阶段测试用） */}
+            {/* 注意：这是开发阶段的功能，正式版本应该从第一步开始执行完整流程 */}
+            <Form.Item>
+              <Button
+                type="default"
+                onClick={handleDirectShipment}
+                loading={loading}
+                block
+                size="large">
+                直接执行发货步骤（开发测试用）
               </Button>
             </Form.Item>
           </Form>

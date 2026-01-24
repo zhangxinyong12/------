@@ -149,6 +149,32 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true // 保持消息通道开放以支持异步响应
   }
 
+  // 处理跳转到shipping-list页面并发送装箱事件
+  if (message.type === "NAVIGATE_TO_SHIPPING_LIST") {
+    handleNavigateToShippingList(sender.tab?.id, message.data)
+      .then((result) => {
+        sendResponse({ success: true, data: result })
+      })
+      .catch((error) => {
+        console.error("[Background] 跳转到shipping-list错误:", error)
+        sendResponse({ success: false, error: error.message })
+      })
+    return true // 保持消息通道开放以支持异步响应
+  }
+
+  // 处理打印后刷新页面继续执行的事件
+  if (message.type === "CONTINUE_AFTER_PRINT_REFRESH") {
+    handleContinueAfterPrintRefresh(sender.tab?.id, message.data)
+      .then((result) => {
+        sendResponse({ success: true, data: result })
+      })
+      .catch((error) => {
+        console.error("[Background] 处理打印后刷新继续执行错误:", error)
+        sendResponse({ success: false, error: error.message })
+      })
+    return true // 保持消息通道开放以支持异步响应
+  }
+
   return false
 })
 
@@ -796,6 +822,221 @@ async function clearShippedStockOrders(): Promise<{
     }
   } catch (error: any) {
     console.error("[Background] clearShippedStockOrders 发生错误:", error)
+    throw error
+  }
+}
+
+/**
+ * 处理打印后刷新页面继续执行
+ * 监听页面刷新完成事件，页面刷新后继续执行批量装箱发货等后续步骤
+ * 通过storage标志区分系统刷新和用户主动刷新
+ * @param tabId 当前标签页ID
+ * @param data 包含刷新ID、仓库、发货方式和URL的数据
+ */
+async function handleContinueAfterPrintRefresh(tabId: number | undefined, data: { refreshId: string; warehouse: string; shippingMethod: string; url: string }) {
+  try {
+    if (!tabId) {
+      throw new Error("无法获取标签页ID")
+    }
+
+    console.log(`[Background] 收到打印后刷新继续执行通知，标签页ID: ${tabId}, 刷新ID: ${data.refreshId}`)
+    
+    // 更新storage中的标志，记录tabId
+    const refreshFlag = await chrome.storage.local.get('shouldContinueAfterRefresh')
+    if (refreshFlag.shouldContinueAfterRefresh && refreshFlag.shouldContinueAfterRefresh.refreshId === data.refreshId) {
+      await chrome.storage.local.set({
+        shouldContinueAfterRefresh: {
+          ...refreshFlag.shouldContinueAfterRefresh,
+          tabId: tabId
+        }
+      })
+      console.log(`[Background] 已更新刷新标志，记录tabId: ${tabId}`)
+    } else {
+      console.warn(`[Background] 未找到匹配的刷新标志，可能已被清除`)
+      return {
+        success: false,
+        message: "未找到匹配的刷新标志",
+        tabId
+      }
+    }
+
+    console.log(`[Background] 开始监听页面刷新完成事件...`)
+
+    // 监听标签页更新事件，等待页面刷新完成
+    chrome.tabs.onUpdated.addListener(function listener(tabIdListener, changeInfo, tab) {
+      // 检查是否是目标标签页
+      if (tabIdListener !== tabId) {
+        return
+      }
+
+      // 检查URL是否匹配shipping-list页面
+      const currentUrl = tab.url || ""
+      const isShippingListPage = currentUrl.includes('seller.kuajingmaihuo.com') &&
+                                 currentUrl.includes('/main/order-manager/shipping-list')
+
+      // 当页面加载完成且URL匹配时
+      if (changeInfo.status === 'complete' && isShippingListPage) {
+        console.log(`[Background] 检测到shipping-list页面刷新完成，URL: ${currentUrl}`)
+
+        // 检查是否是系统触发的刷新（通过storage标志判断）
+        chrome.storage.local.get('shouldContinueAfterRefresh').then((result) => {
+          const flag = result.shouldContinueAfterRefresh
+          
+          // 检查标志是否存在且匹配
+          if (!flag || flag.refreshId !== data.refreshId || flag.tabId !== tabId) {
+            console.log('[Background] 这是用户主动刷新，不执行后续步骤')
+            // 移除监听器
+            chrome.tabs.onUpdated.removeListener(listener)
+            return
+          }
+
+          // 清除标志，避免重复执行
+          chrome.storage.local.remove('shouldContinueAfterRefresh')
+          console.log('[Background] 已清除刷新标志，确认为系统刷新')
+
+          // 移除监听器，避免重复执行
+          chrome.tabs.onUpdated.removeListener(listener)
+
+          // 等待3秒后，继续执行后续步骤（批量装箱发货等）
+          setTimeout(async () => {
+            try {
+              console.log('[Background] 页面刷新完成（系统刷新），等待3秒后继续执行后续步骤')
+
+              // 向content script发送继续执行的消息
+              const response = await chrome.tabs.sendMessage(tabId, {
+                type: 'CONTINUE_SHIPMENT_STEPS',
+                data: {
+                  warehouse: data.warehouse,
+                  shippingMethod: data.shippingMethod
+                }
+              })
+
+              console.log('[Background] Content script响应:', response)
+            } catch (error: any) {
+              console.error('[Background] 发送继续执行消息失败:', error)
+              // 如果content script还未注入，可以尝试重试
+              if (error.message?.includes('Could not establish connection')) {
+                console.log('[Background] Content script可能还未注入，将在1秒后重试...')
+                setTimeout(async () => {
+                  try {
+                    await chrome.tabs.sendMessage(tabId, {
+                      type: 'CONTINUE_SHIPMENT_STEPS',
+                      data: {
+                        warehouse: data.warehouse,
+                        shippingMethod: data.shippingMethod
+                      }
+                    })
+                  } catch (retryError) {
+                    console.error('[Background] 重试发送继续执行消息失败:', retryError)
+                  }
+                }, 1000)
+              }
+            }
+          }, 3000) // 等待3秒
+        })
+      }
+    })
+
+    return {
+      success: true,
+      message: "已开始监听页面刷新，页面刷新完成后等待3秒继续执行后续步骤",
+      tabId
+    }
+  } catch (error: any) {
+    console.error("[Background] handleContinueAfterPrintRefresh 发生错误:", error)
+    throw error
+  }
+}
+
+/**
+ * 处理跳转到shipping-list页面并发送装箱事件
+ * @param tabId 当前标签页ID
+ * @param data 包含URL的数据
+ */
+async function handleNavigateToShippingList(tabId: number | undefined, data: { url: string }) {
+  try {
+    if (!tabId) {
+      throw new Error("无法获取标签页ID")
+    }
+
+    console.log(`[Background] 准备跳转到shipping-list页面: ${data.url}`)
+
+    // 跳转到shipping-list页面
+    await chrome.tabs.update(tabId, {
+      url: data.url
+    })
+
+    console.log(`[Background] 已跳转到shipping-list页面，标签页ID: ${tabId}`)
+
+    // 监听标签页更新事件，等待页面加载完成
+    chrome.tabs.onUpdated.addListener(function listener(tabIdListener, changeInfo, tab) {
+      // 检查是否是目标标签页
+      if (tabIdListener !== tabId) {
+        return
+      }
+
+      // 检查URL是否匹配shipping-list页面
+      const currentUrl = tab.url || ""
+      const isShippingListPage = currentUrl.includes('seller.kuajingmaihuo.com') &&
+                                 currentUrl.includes('/main/order-manager/shipping-list')
+
+      // 当页面加载完成且URL匹配时
+      if (changeInfo.status === 'complete' && isShippingListPage) {
+        console.log(`[Background] 检测到shipping-list页面加载完成，URL: ${currentUrl}`)
+
+        // 移除监听器，避免重复执行
+        chrome.tabs.onUpdated.removeListener(listener)
+
+        // 等待3秒后，发送装箱事件
+        setTimeout(async () => {
+          try {
+            console.log('[Background] 等待3秒后，发送装箱事件')
+
+            // 获取用户配置
+            const config = await getUserConfig()
+
+            // 向content script发送装箱事件消息
+            const response = await chrome.tabs.sendMessage(tabId, {
+              type: 'START_BOXING_TASK',
+              data: {
+                warehouse: config?.warehouse || '',
+                shippingMethod: config?.shippingMethod || ''
+              }
+            })
+
+            console.log('[Background] Content script响应:', response)
+          } catch (error: any) {
+            console.error('[Background] 发送装箱事件失败:', error)
+            // 如果content script还未注入，可以尝试重试
+            if (error.message?.includes('Could not establish connection')) {
+              console.log('[Background] Content script可能还未注入，将在1秒后重试...')
+              setTimeout(async () => {
+                try {
+                  const config = await getUserConfig()
+                  await chrome.tabs.sendMessage(tabId, {
+                    type: 'START_BOXING_TASK',
+                    data: {
+                      warehouse: config?.warehouse || '',
+                      shippingMethod: config?.shippingMethod || ''
+                    }
+                  })
+                } catch (retryError) {
+                  console.error('[Background] 重试发送装箱事件失败:', retryError)
+                }
+              }, 1000)
+            }
+          }
+        }, 3000) // 等待3秒
+      }
+    })
+
+    return {
+      success: true,
+      message: "已跳转到shipping-list页面，等待3秒后发送装箱事件",
+      tabId
+    }
+  } catch (error: any) {
+    console.error("[Background] handleNavigateToShippingList 发生错误:", error)
     throw error
   }
 }
