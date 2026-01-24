@@ -1,0 +1,52 @@
+{
+  "name": "douyin-auto-shipment",
+  "displayName": "抖音自动发货插件",
+  "version": "0.1.0",
+  "description": "抖音自动发货插件 - 批量自动发货工具",
+  "author": "",
+  "scripts": {
+    "dev": "cross-env PLASMO_PUBLIC_ENV=development plasmo dev",
+    "dev:development": "cross-env PLASMO_PUBLIC_ENV=development plasmo dev",
+    "build": "cross-env PLASMO_PUBLIC_ENV=development plasmo build",
+    "build:production": "cross-env PLASMO_PUBLIC_ENV=production plasmo build",
+    "build:test": "cross-env PLASMO_PUBLIC_ENV=test plasmo build",
+    "package": "cross-env PLASMO_PUBLIC_ENV=development plasmo package",
+    "package:production": "cross-env PLASMO_PUBLIC_ENV=production plasmo package"
+  },
+  "dependencies": {
+    "@ant-design/icons": "^5.2.6",
+    "@plasmohq/storage": "^1.15.0",
+    "antd": "^5.12.8",
+    "plasmo": "0.90.5",
+    "react": "18.2.0",
+    "react-dom": "18.2.0"
+  },
+  "devDependencies": {
+    "@ianvs/prettier-plugin-sort-imports": "4.1.1",
+    "@types/chrome": "0.0.258",
+    "@types/node": "20.11.5",
+    "@types/react": "18.2.48",
+    "@types/react-dom": "18.2.18",
+    "autoprefixer": "^10.4.16",
+    "cross-env": "^7.0.3",
+    "dayjs": "^1.11.19",
+    "postcss": "^8.4.32",
+    "prettier": "3.2.4",
+    "tailwindcss": "^3.4.0",
+    "typescript": "5.3.3"
+  },
+  "manifest": {
+    "name": "抖音自动发货插件",
+    "description": "抖音自动发货插件 - 批量自动发货工具",
+    "host_permissions": [
+      "http://*/*",
+      "https://*/*"
+    ],
+    "permissions": [
+      "tabs",
+      "storage",
+      "windows",
+      "scripting"
+    ]
+  }
+}
