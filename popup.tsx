@@ -46,6 +46,11 @@ const PopupPage: React.FC = () => {
     setLoading(true)
 
     try {
+      // 每次开始执行时，先清空之前保存的数据
+      console.log('[Popup] 清空之前保存的数据...')
+      await chrome.storage.local.remove(['shippingDeskData', 'shippingDeskDataRecordList'])
+      console.log('[Popup] 数据已清空')
+
       // 发送消息到 background，保存配置并打开新窗口
       const response = await chrome.runtime.sendMessage({
         type: "SAVE_CONFIG_AND_OPEN_URL",

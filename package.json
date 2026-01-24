@@ -46,7 +46,8 @@
       "tabs",
       "storage",
       "windows",
-      "scripting"
+      "scripting",
+      "downloads"
     ]
   }
 }
