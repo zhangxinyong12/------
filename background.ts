@@ -97,6 +97,58 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true // 保持消息通道开放以支持异步响应
   }
 
+  // 处理记录已发货备货单号的请求
+  if (message.type === "RECORD_SHIPPED_STOCK_ORDER") {
+    handleRecordShippedStockOrder(message.data)
+      .then((result) => {
+        sendResponse({ success: true, data: result })
+      })
+      .catch((error) => {
+        console.error("[Background] 记录已发货备货单号错误:", error)
+        sendResponse({ success: false, error: error.message })
+      })
+    return true // 保持消息通道开放以支持异步响应
+  }
+
+  // 处理获取已发货备货单号列表的请求
+  if (message.type === "GET_SHIPPED_STOCK_ORDERS") {
+    getShippedStockOrders()
+      .then((result) => {
+        sendResponse({ success: true, data: result })
+      })
+      .catch((error) => {
+        console.error("[Background] 获取已发货备货单号错误:", error)
+        sendResponse({ success: false, error: error.message })
+      })
+    return true // 保持消息通道开放以支持异步响应
+  }
+
+  // 处理检查备货单号是否已发货的请求
+  if (message.type === "CHECK_STOCK_ORDER_SHIPPED") {
+    checkStockOrderShipped(message.data)
+      .then((result) => {
+        sendResponse({ success: true, data: result })
+      })
+      .catch((error) => {
+        console.error("[Background] 检查备货单号发货状态错误:", error)
+        sendResponse({ success: false, error: error.message })
+      })
+    return true // 保持消息通道开放以支持异步响应
+  }
+
+  // 处理清除已发货记录的请求
+  if (message.type === "CLEAR_SHIPPED_STOCK_ORDERS") {
+    clearShippedStockOrders()
+      .then((result) => {
+        sendResponse({ success: true, data: result })
+      })
+      .catch((error) => {
+        console.error("[Background] 清除已发货记录错误:", error)
+        sendResponse({ success: false, error: error.message })
+      })
+    return true // 保持消息通道开放以支持异步响应
+  }
+
   return false
 })
 
@@ -547,13 +599,13 @@ async function handleOpenShippingDeskPage(data: {
       // 检查URL是否匹配（支持URL包含目标域名的情况）
       const targetUrl = data.url
       const currentUrl = tab.url || ""
-      const isUrlMatch = currentUrl.includes('seller.kuajingmaihuo.com') && 
+      const isUrlMatch = currentUrl.includes('seller.kuajingmaihuo.com') &&
                         currentUrl.includes('/main/order-manager/shipping-desk')
 
       // 当页面加载完成且URL匹配时
       if (changeInfo.status === 'complete' && isUrlMatch) {
         console.log(`[Background] 检测到发货台页面加载完成，URL: ${currentUrl}`)
-        
+
         // 移除监听器，避免重复执行
         chrome.tabs.onUpdated.removeListener(listener)
 
@@ -561,10 +613,10 @@ async function handleOpenShippingDeskPage(data: {
         setTimeout(async () => {
           try {
             console.log('[Background] 等待3秒后，通知content script开始执行发货台任务')
-            
+
             // 获取用户配置
             const config = await getUserConfig()
-            
+
             // 向content script发送消息
             const response = await chrome.tabs.sendMessage(tabId, {
               type: 'START_SHIPPING_DESK_TASK',
@@ -608,6 +660,142 @@ async function handleOpenShippingDeskPage(data: {
     }
   } catch (error: any) {
     console.error("[Background] handleOpenShippingDeskPage 发生错误:", error)
+    throw error
+  }
+}
+
+/**
+ * 记录已发货的备货单号
+ * 使用备货单号作为唯一key
+ * @param data 包含备货单号数组或单个备货单号的数据
+ */
+async function handleRecordShippedStockOrder(data: {
+  stockOrderNos: string[] | string // 备货单号数组或单个备货单号
+  warehouse?: string // 可选的仓库名称
+}) {
+  try {
+    // 处理备货单号，支持数组和单个字符串
+    const orderNos = Array.isArray(data.stockOrderNos) ? data.stockOrderNos : [data.stockOrderNos]
+
+    console.log(`[Background] 记录 ${orderNos.length} 个已发货备货单号:`, orderNos)
+
+    // 获取现有的已发货记录
+    const existingData = await chrome.storage.local.get('shippedStockOrders')
+    const existingSet = new Set(existingData.shippedStockOrders || [])
+
+    // 添加新的备货单号
+    let addedCount = 0
+    for (const orderNo of orderNos) {
+      if (orderNo && !existingSet.has(orderNo)) {
+        existingSet.add(orderNo)
+        addedCount++
+      }
+    }
+
+    // 保存更新后的记录
+    await chrome.storage.local.set({
+      shippedStockOrders: Array.from(existingSet)
+    })
+
+    console.log(`[Background] 已保存已发货备货单号，本次新增 ${addedCount} 个，总计 ${existingSet.size} 个`)
+
+    return {
+      success: true,
+      message: "已记录已发货备货单号",
+      addedCount,
+      totalCount: existingSet.size
+    }
+  } catch (error: any) {
+    console.error("[Background] handleRecordShippedStockOrder 发生错误:", error)
+    throw error
+  }
+}
+
+/**
+ * 获取所有已发货的备货单号列表
+ * @returns 已发货备货单号数组
+ */
+async function getShippedStockOrders(): Promise<string[]> {
+  try {
+    const result = await chrome.storage.local.get('shippedStockOrders')
+    const shippedOrders = result.shippedStockOrders || []
+    console.log(`[Background] 获取已发货备货单号，共 ${shippedOrders.length} 个`)
+    return shippedOrders
+  } catch (error: any) {
+    console.error("[Background] getShippedStockOrders 发生错误:", error)
+    throw error
+  }
+}
+
+/**
+ * 检查指定备货单号是否已发货
+ * @param data 包含备货单号或备货单号数组的数据
+ * @returns 检查结果对象
+ */
+async function checkStockOrderShipped(data: {
+  stockOrderNos: string[] | string // 备货单号数组或单个备货单号
+}): Promise<{
+  shipped: string[] // 已发货的备货单号
+  notShipped: string[] // 未发货的备货单号
+}> {
+  try {
+    // 处理备货单号，支持数组和单个字符串
+    const orderNos = Array.isArray(data.stockOrderNos) ? data.stockOrderNos : [data.stockOrderNos]
+
+    // 获取所有已发货的备货单号
+    const shippedOrders = await getShippedStockOrders()
+    const shippedSet = new Set(shippedOrders)
+
+    // 分类检查
+    const shipped: string[] = []
+    const notShipped: string[] = []
+
+    for (const orderNo of orderNos) {
+      if (shippedSet.has(orderNo)) {
+        shipped.push(orderNo)
+      } else {
+        notShipped.push(orderNo)
+      }
+    }
+
+    console.log(`[Background] 检查备货单号发货状态: 已发货 ${shipped.length} 个, 未发货 ${notShipped.length} 个`)
+
+    return {
+      shipped,
+      notShipped
+    }
+  } catch (error: any) {
+    console.error("[Background] checkStockOrderShipped 发生错误:", error)
+    throw error
+  }
+}
+
+/**
+ * 清除所有已发货记录
+ * @returns 清除结果
+ */
+async function clearShippedStockOrders(): Promise<{
+  success: boolean
+  message: string
+  clearedCount: number
+}> {
+  try {
+    // 获取现有的记录数量
+    const existingData = await chrome.storage.local.get('shippedStockOrders')
+    const count = (existingData.shippedStockOrders || []).length
+
+    // 清除记录
+    await chrome.storage.local.remove('shippedStockOrders')
+
+    console.log(`[Background] 已清除 ${count} 个已发货备货单号记录`)
+
+    return {
+      success: true,
+      message: "已清除所有已发货记录",
+      clearedCount: count
+    }
+  } catch (error: any) {
+    console.error("[Background] clearShippedStockOrders 发生错误:", error)
     throw error
   }
 }

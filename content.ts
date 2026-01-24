@@ -257,8 +257,14 @@ function extractTableData(): TableRowData[] {
         let warehouse = ''
         if (warehouseSpans.length > 0) {
           warehouse = warehouseSpans[0].textContent?.trim() || ''
-          // 删除"（前置收货）"后缀
-          warehouse = warehouse.replace(/\s*（前置收货）\s*$/, '')
+
+          // 删除"（前置收货）"后缀（支持多种格式）
+          // 可能的格式：
+          // - "义乌宝湾1号子仓（前置收货）" - 中文括号
+          // - "义乌宝湾1号子仓 (前置收货)" - 英文括号和空格
+          // - "义乌宝湾1号子仓(前置收货)" - 英文括号无空格
+          // - "义乌宝湾1号子仓 （前置收货）" - 中文括号和空格
+          warehouse = warehouse.replace(/\s*[（(]前置收货[）)]\s*$/, '')
         }
 
         // 提取SKU ID（从包含"SKU ID："的div中的span标签内提取）
@@ -393,59 +399,654 @@ function groupDataByWarehouse(tableData: TableRowData[]): Record<string, TableRo
     grouped[warehouse].push(row)
   })
 
-  console.log('[Content] 数据分组结果:', Object.keys(grouped).map(warehouse => ({
-    warehouse,
-    count: grouped[warehouse].length
-  })))
-
   return grouped
 }
 
 /**
- * 勾选指定仓库的所有行
- * @param warehouse 仓库名称
- * @param groupedData 分组后的数据
+ * 勾选表格中的第一行
+ * @param warehouse 仓库名称（保留参数，但不使用）
+ * @param groupedData 分组后的数据（保留参数，但不使用）
  */
 async function selectRowsByWarehouse(warehouse: string, groupedData: Record<string, TableRowData[]>) {
-  const rows = groupedData[warehouse]
-  
-  if (!rows || rows.length === 0) {
-    console.warn(`[Content] 仓库 ${warehouse} 没有数据`)
-    return
-  }
-
-  console.log(`[Content] 开始勾选仓库 ${warehouse} 的 ${rows.length} 行数据...`)
-
   // 先取消全选（如果已选中）
   const tbody = document.querySelector('tbody[data-testid="beast-core-table-middle-tbody"]')
   if (tbody) {
-    // 查找表头的全选复选框
     const headerRow = document.querySelector('tr[data-testid="beast-core-table-header-tr"]')
     if (headerRow) {
       const headerCheckbox = headerRow.querySelector('input[type="checkbox"][mode="checkbox"]') as HTMLInputElement
       if (headerCheckbox && headerCheckbox.checked) {
-        console.log('[Content] 取消全选...')
         headerCheckbox.click()
         await sleep(500)
       }
     }
   }
 
-  // 勾选指定仓库的所有行
-  for (const rowData of rows) {
-    try {
-      const checkbox = rowData.rowElement.querySelector('input[type="checkbox"][mode="checkbox"]') as HTMLInputElement
-      
-      if (checkbox && !checkbox.checked) {
-        checkbox.click()
-        await sleep(100) // 每行之间稍作延迟
+  // 直接勾选表格中的第一行
+  const allTableRows = tbody?.querySelectorAll('tr[data-testid="beast-core-table-body-tr"]') || []
+  if (allTableRows.length > 0) {
+    const firstRow = allTableRows[0] as HTMLElement
+    const checkbox = firstRow.querySelector('input[type="checkbox"][mode="checkbox"]') as HTMLInputElement
+    if (checkbox && !checkbox.checked) {
+      checkbox.click()
+      await sleep(200)
+    }
+  }
+}
+
+/**
+ * 点击"创建发货单"按钮
+ */
+async function clickCreateShippingOrderButton() {
+  console.log('[Content] 查找并点击创建发货单按钮...')
+
+  const createButton = await findButtonByText(
+    'button[data-testid="beast-core-button"]',
+    '创建发货单',
+    {
+      timeout: 10000,
+      interval: 200
+    }
+  )
+
+  if (!createButton) {
+    console.error('[Content] 未找到创建发货单按钮')
+    return false
+  }
+
+  createButton.click()
+  console.log('[Content] 已点击创建发货单按钮')
+
+  // 动态查找弹窗出现
+  console.log('[Content] 等待弹窗出现（最多等待10秒）...')
+  const modalWrapper = await findDom('div[data-testid="beast-core-modal-innerWrapper"]', {
+    timeout: 10000,
+    interval: 200
+  })
+
+  if (!modalWrapper) {
+    console.log('[Content] 未发现弹窗，继续执行...')
+    return true
+  }
+
+  console.log('[Content] 发现弹窗，检查弹窗类型...')
+
+  // 获取弹窗文本内容，判断弹窗类型
+  const modalText = modalWrapper.textContent || ''
+
+  // 情况一：发货数量确认弹窗（"发货数一致，继续创建"）
+  if (modalText.includes('发货数一致') && modalText.includes('本次共计发货')) {
+    console.log('[Content] 检测到发货数量确认弹窗')
+
+    const confirmButton = await findButtonByText(
+      'button[data-testid="beast-core-button"]',
+      '发货数一致，继续创建',
+      {
+        timeout: 5000,
+        interval: 200,
+        parent: modalWrapper as Element
       }
-    } catch (error: any) {
-      console.error(`[Content] 勾选行时发生错误:`, error)
+    )
+
+    if (confirmButton) {
+      console.log('[Content] 找到"发货数一致，继续创建"按钮，准备点击...')
+      confirmButton.click()
+      console.log('[Content] 已点击"发货数一致，继续创建"按钮')
+
+      // 等待弹窗关闭
+      await sleep(2000)
+      return true
+    } else {
+      console.warn('[Content] 未找到"发货数一致，继续创建"按钮')
+      return false
     }
   }
 
-  console.log(`[Content] 已完成勾选仓库 ${warehouse} 的所有行`)
+  // 情况二：同步创建弹窗（"同步创建"）
+  if (modalText.includes('是否同步创建发货单')) {
+    console.log('[Content] 检测到同步创建弹窗')
+
+    const syncButton = await findButtonByText(
+      'button[data-testid="beast-core-button"]',
+      '同步创建',
+      {
+        timeout: 5000,
+        interval: 200,
+        parent: modalWrapper as Element
+      }
+    )
+
+    if (syncButton) {
+      console.log('[Content] 找到"同步创建"按钮，准备点击...')
+      syncButton.click()
+      console.log('[Content] 已点击"同步创建"按钮')
+
+      // 等待弹窗关闭
+      await sleep(2000)
+      return true
+    } else {
+      console.warn('[Content] 未找到"同步创建"按钮')
+      return false
+    }
+  }
+
+  // 未知弹窗类型
+  console.warn('[Content] 未知弹窗类型，弹窗文本:', modalText.substring(0, 100))
+  await sleep(2000)
+  return true
+}
+
+/**
+ * 在创建发货单页面选择仓库
+ * @param warehouse 用户选择的仓库名称
+ */
+async function selectWarehouseInCreatePage(warehouse: string) {
+  console.log(`[Content] 在创建发货单页面选择仓库: ${warehouse}`)
+
+  // 等待页面加载
+  await sleep(2000)
+
+  // 查找仓库选择器（单选按钮）
+  // 可能的选择器：input[type="radio"] 或 data-testid 包含 warehouse 的元素
+  const radioInputs = document.querySelectorAll('input[type="radio"]')
+
+  for (const radio of Array.from(radioInputs)) {
+    // 查找对应的标签文本
+    const label = radio.closest('label')?.textContent || ''
+    const text = label.trim()
+
+    console.log(`[Content] 检查仓库选项: "${text}"，目标仓库: "${warehouse}"`)
+
+    // 检查是否匹配目标仓库（支持部分匹配，如"义乌仓库"匹配"义乌宝湾1号子仓"）
+    if (text.includes(warehouse)) {
+      console.log(`[Content] 找到匹配的仓库选项: ${text}`)
+      // 点击单选按钮
+      if (radio instanceof HTMLElement) {
+        radio.click()
+      }
+      await sleep(500)
+      return true
+    }
+  }
+
+  console.warn(`[Content] 未找到匹配的仓库: ${warehouse}`)
+  return false
+}
+
+/**
+ * 点击"批量选择"按钮并选择指定仓库
+ * @param warehouse 用户选择的仓库名称
+ */
+async function clickBatchSelectAndChooseWarehouse(warehouse: string) {
+  console.log(`[Content] 查找并点击批量选择按钮...`)
+
+  const batchSelectButton = await findButtonByText(
+    'button[data-testid="beast-core-button"]',
+    '批量选择',
+    {
+      timeout: 10000,
+      interval: 200
+    }
+  )
+
+  if (!batchSelectButton) {
+    console.error('[Content] 未找到批量选择按钮')
+    return false
+  }
+
+  batchSelectButton.click()
+  console.log('[Content] 已点击批量选择按钮')
+  await sleep(1500)
+
+  // 在弹窗中选择仓库
+  console.log(`[Content] 在批量选择弹窗中选择仓库: ${warehouse}`)
+
+  // 查找弹窗中的仓库选项
+  const modalWrapper = document.querySelector('div[data-testid="beast-core-modal-innerWrapper"]')
+  if (!modalWrapper) {
+    console.error('[Content] 未找到批量选择弹窗')
+    return false
+  }
+
+  // 在弹窗中查找仓库选项（单选按钮或checkbox）
+  const radioInputs = modalWrapper.querySelectorAll('input[type="radio"], input[type="checkbox"]')
+
+  for (const radio of Array.from(radioInputs)) {
+    const label = radio.closest('label')?.textContent || ''
+    const text = label.trim()
+
+    console.log(`[Content] 检查仓库选项: "${text}"`)
+
+    if (text.includes(warehouse)) {
+      console.log(`[Content] 找到匹配的仓库选项: ${text}`)
+      if (radio instanceof HTMLElement) {
+        radio.click()
+      }
+      await sleep(500)
+      break
+    }
+  }
+
+  // 点击确认按钮
+  console.log('[Content] 点击批量选择确认按钮...')
+  const confirmButton = await findButtonByText(
+    'button[data-testid="beast-core-button"]',
+    '确认',
+    {
+      timeout: 5000,
+      interval: 200,
+      parent: modalWrapper as Element
+    }
+  )
+
+  if (confirmButton) {
+    confirmButton.click()
+    console.log('[Content] 已点击批量选择确认按钮')
+    await sleep(1500)
+    return true
+  }
+
+  console.warn('[Content] 未找到批量选择确认按钮')
+  return false
+}
+
+/**
+ * 点击"下一步"按钮
+ */
+async function clickNextButton() {
+  console.log('[Content] 查找并点击下一步按钮...')
+
+  const nextButton = await findButtonByText(
+    'button[data-testid="beast-core-button"]',
+    '下一步',
+    {
+      timeout: 10000,
+      interval: 200
+    }
+  )
+
+  if (!nextButton) {
+    console.error('[Content] 未找到下一步按钮')
+    return false
+  }
+
+  nextButton.click()
+  console.log('[Content] 已点击下一步按钮')
+  await sleep(2000)
+  return true
+}
+
+/**
+ * 点击"确认创建"按钮
+ */
+async function clickConfirmCreateButton() {
+  console.log('[Content] 查找并点击确认创建按钮...')
+
+  const confirmButton = await findButtonByText(
+    'button[data-testid="beast-core-button"]',
+    '确认创建',
+    {
+      timeout: 10000,
+      interval: 200
+    }
+  )
+
+  if (!confirmButton) {
+    console.error('[Content] 未找到确认创建按钮')
+    return false
+  }
+
+  confirmButton.click()
+  console.log('[Content] 已点击确认创建按钮')
+  await sleep(2000)
+  return true
+}
+
+/**
+ * 等待页面跳转并确认
+ * @param expectedUrl 预期的URL关键字
+ * @param timeout 超时时间（毫秒）
+ */
+async function waitForPageNavigation(expectedUrl: string, timeout: number = 30000): Promise<boolean> {
+  console.log(`[Content] 等待页面跳转到包含 "${expectedUrl}" 的页面...`)
+
+  const startTime = Date.now()
+
+  return new Promise((resolve) => {
+    const checkUrl = () => {
+      const currentUrl = window.location.href
+      if (currentUrl.includes(expectedUrl)) {
+        console.log(`[Content] 页面已跳转: ${currentUrl}`)
+        resolve(true)
+        return
+      }
+
+      if (Date.now() - startTime >= timeout) {
+        console.warn(`[Content] 等待页面跳转超时`)
+        resolve(false)
+        return
+      }
+
+      setTimeout(checkUrl, 500)
+    }
+
+    checkUrl()
+  })
+}
+
+/**
+ * 点击"刷新"按钮
+ */
+async function clickRefreshButton() {
+  console.log('[Content] 查找并点击刷新按钮...')
+
+  const refreshButton = await findButtonByText(
+    'button[data-testid="beast-core-button"]',
+    '刷新',
+    {
+      timeout: 10000,
+      interval: 200
+    }
+  )
+
+  if (!refreshButton) {
+    console.error('[Content] 未找到刷新按钮')
+    return false
+  }
+
+  refreshButton.click()
+  console.log('[Content] 已点击刷新按钮')
+  await sleep(3000)
+  return true
+}
+
+/**
+ * 全部勾选待装箱发货的订单
+ */
+async function selectAllOrdersForShipment() {
+  console.log('[Content] 全部勾选待装箱发货订单...')
+
+  // 查找表格头部的全选复选框
+  const headerRow = document.querySelector('tr[data-testid="beast-core-table-header-tr"]')
+  if (!headerRow) {
+    console.error('[Content] 未找到表格头部')
+    return false
+  }
+
+  const headerCheckbox = headerRow.querySelector('input[type="checkbox"][mode="checkbox"]') as HTMLInputElement
+  if (!headerCheckbox) {
+    console.error('[Content] 未找到全选复选框')
+    return false
+  }
+
+  if (!headerCheckbox.checked) {
+    headerCheckbox.click()
+    console.log('[Content] 已点击全选复选框')
+    await sleep(500)
+  }
+
+  return true
+}
+
+/**
+ * 点击"批量打印商品打包标签"按钮
+ */
+async function clickBatchPrintLabelButton() {
+  console.log('[Content] 查找并点击批量打印商品打包标签按钮...')
+
+  const printButton = await findButtonByText(
+    'button[data-testid="beast-core-button"]',
+    '批量打印商品打包标签',
+    {
+      timeout: 10000,
+      interval: 200
+    }
+  )
+
+  if (!printButton) {
+    console.error('[Content] 未找到批量打印商品打包标签按钮')
+    return false
+  }
+
+  printButton.click()
+  console.log('[Content] 已点击批量打印商品打包标签按钮')
+  await sleep(2000)
+  return true
+}
+
+/**
+ * 点击"批量装箱发货"按钮
+ */
+async function clickBatchBoxingShipButton() {
+  console.log('[Content] 查找并点击批量装箱发货按钮...')
+
+  const boxingButton = await findButtonByText(
+    'button[data-testid="beast-core-button"]',
+    '批量装箱发货',
+    {
+      timeout: 10000,
+      interval: 200
+    }
+  )
+
+  if (!boxingButton) {
+    console.error('[Content] 未找到批量装箱发货按钮')
+    return false
+  }
+
+  boxingButton.click()
+  console.log('[Content] 已点击批量装箱发货按钮')
+  await sleep(2000)
+  return true
+}
+
+/**
+ * 选择发货方式
+ * @param shippingMethod 发货方式（自送、自行委托第三方物流、在线物流下单）
+ */
+async function selectShippingMethod(shippingMethod: string) {
+  console.log(`[Content] 选择发货方式: ${shippingMethod}`)
+
+  // 等待弹窗或选项出现
+  await sleep(1500)
+
+  // 查找发货方式选项（单选按钮）
+  const radioInputs = document.querySelectorAll('input[type="radio"]')
+
+  for (const radio of Array.from(radioInputs)) {
+    const label = radio.closest('label')?.textContent || ''
+    const text = label.trim()
+
+    console.log(`[Content] 检查发货方式选项: "${text}"`)
+
+    // 支持模糊匹配
+    if (shippingMethod === '自送' && text.includes('自送')) {
+      if (radio instanceof HTMLElement) {
+        radio.click()
+      }
+      await sleep(500)
+      return true
+    } else if (shippingMethod === '自行委托第三方物流' && (text.includes('自行委托') || text.includes('第三方物流'))) {
+      if (radio instanceof HTMLElement) {
+        radio.click()
+      }
+      await sleep(500)
+      return true
+    } else if (shippingMethod === '在线物流下单' && (text.includes('在线物流') || text.includes('在线下单'))) {
+      if (radio instanceof HTMLElement) {
+        radio.click()
+      }
+      await sleep(500)
+      return true
+    }
+  }
+
+  console.warn(`[Content] 未找到匹配的发货方式: ${shippingMethod}`)
+  return false
+}
+
+/**
+ * 选择"不合包"选项
+ */
+async function selectNoBoxing() {
+  console.log('[Content] 选择不合包选项...')
+
+  // 查找不合包选项
+  const radioInputs = document.querySelectorAll('input[type="radio"]')
+
+  for (const radio of Array.from(radioInputs)) {
+    const label = radio.closest('label')?.textContent || ''
+    const text = label.trim()
+
+    if (text.includes('不合包') || text.includes('不合并')) {
+      console.log(`[Content] 找到不合包选项`)
+      if (radio instanceof HTMLElement) {
+        radio.click()
+      }
+      await sleep(500)
+      return true
+    }
+  }
+
+  console.warn('[Content] 未找到不合包选项')
+  return false
+}
+
+/**
+ * 选择数量为1
+ */
+async function selectQuantityOne() {
+  console.log('[Content] 选择数量为1...')
+
+  // 查找数量输入框或选择器
+  const quantityInputs = document.querySelectorAll('input[type="number"]')
+
+  for (const input of Array.from(quantityInputs)) {
+    (input as HTMLInputElement).value = '1'
+    // 触发change事件
+    input.dispatchEvent(new Event('change', { bubbles: true }))
+    await sleep(500)
+    return true
+  }
+
+  console.warn('[Content] 未找到数量输入框')
+  return false
+}
+
+/**
+ * 点击最终"确认发货"按钮
+ */
+async function clickConfirmShipmentButton() {
+  console.log('[Content] 查找并点击最终确认发货按钮...')
+
+  const confirmButton = await findButtonByText(
+    'button[data-testid="beast-core-button"]',
+    '确认发货',
+    {
+      timeout: 10000,
+      interval: 200
+    }
+  )
+
+  if (!confirmButton) {
+    console.error('[Content] 未找到最终确认发货按钮')
+    return false
+  }
+
+  confirmButton.click()
+  console.log('[Content] 已点击最终确认发货按钮')
+  await sleep(3000)
+  return true
+}
+
+/**
+ * 执行完整的发货流程
+ * @param warehouse 仓库名称
+ * @param shippingMethod 发货方式
+ * @returns 是否成功
+ */
+async function executeShipmentProcess(warehouse: string, shippingMethod: string): Promise<boolean> {
+  try {
+    console.log(`[Content] 开始执行完整发货流程，仓库: ${warehouse}，发货方式: ${shippingMethod}`)
+
+    // 步骤1: 点击"创建发货单"按钮
+    if (!await clickCreateShippingOrderButton()) {
+      return false
+    }
+
+    // 步骤2: 等待跳转到创建发货单页面
+    if (!await waitForPageNavigation('/shipping-desk/create', 10000)) {
+      console.warn('[Content] 未跳转到创建发货单页面')
+      // 尝试使用"批量选择"方式
+      if (!await clickBatchSelectAndChooseWarehouse(warehouse)) {
+        return false
+      }
+    } else {
+      // 步骤3: 在创建发货单页面选择仓库
+      if (!await selectWarehouseInCreatePage(warehouse)) {
+        return false
+      }
+    }
+
+    // 步骤4: 点击"下一步"按钮
+    if (!await clickNextButton()) {
+      return false
+    }
+
+    // 步骤5: 点击"确认创建"按钮
+    if (!await clickConfirmCreateButton()) {
+      return false
+    }
+
+    // 步骤6: 等待跳转回发货台页面
+    console.log('[Content] 等待跳转回发货台页面...')
+    await sleep(3000)
+
+    // 步骤7: 点击"刷新"按钮
+    if (!await clickRefreshButton()) {
+      return false
+    }
+
+    // 步骤8: 全部勾选待装箱发货订单
+    if (!await selectAllOrdersForShipment()) {
+      return false
+    }
+
+    // 步骤9: 点击"批量打印商品打包标签"按钮
+    if (!await clickBatchPrintLabelButton()) {
+      return false
+    }
+
+    // 步骤10: 点击"批量装箱发货"按钮
+    if (!await clickBatchBoxingShipButton()) {
+      return false
+    }
+
+    // 步骤11: 选择发货方式
+    if (!await selectShippingMethod(shippingMethod)) {
+      return false
+    }
+
+    // 步骤12: 选择"不合包"
+    if (!await selectNoBoxing()) {
+      return false
+    }
+
+    // 步骤13: 选择数量为1
+    if (!await selectQuantityOne()) {
+      return false
+    }
+
+    // 步骤14: 点击最终"确认发货"按钮
+    if (!await clickConfirmShipmentButton()) {
+      return false
+    }
+
+    console.log('[Content] 完整发货流程执行成功')
+    return true
+  } catch (error: any) {
+    console.error('[Content] 执行发货流程时发生错误:', error)
+    return false
+  }
 }
 
 /**
@@ -454,52 +1055,62 @@ async function selectRowsByWarehouse(warehouse: string, groupedData: Record<stri
  * @param config 用户配置（仓库、发货方式）
  */
 async function startShippingDeskTasks(config: { warehouse: string; shippingMethod: string }) {
-  console.log('[Content] 收到background通知，开始发货台任务，配置:', config)
-  
   // 设置视口大小
   setViewportSize()
 
   try {
-    // 第一步：等待表格分页元素出现，表示表格已加载完成
-    console.log('[Content] 等待表格分页元素加载...')
+    // 等待表格分页元素出现，表示表格已加载完成
     const paginationElement = await findDom('ul[data-testid="beast-core-pagination"]', {
-      timeout: 30000, // 30秒超时
-      interval: 200   // 每200ms检查一次
+      timeout: 30000,
+      interval: 200
     })
 
     if (!paginationElement) {
-      console.error('[Content] 未找到表格分页元素，可能已超时')
       return
     }
 
-    console.log('[Content] 找到表格分页元素，表格已加载完成')
-
-    // 第二步：等待3秒，确保表格完全渲染完成
-    console.log('[Content] 等待3秒，确保表格完全渲染...')
+    // 等待3秒，确保表格完全渲染完成
     await sleep(3000)
 
-    // 第三步：提取表格数据
-    console.log('[Content] 开始提取表格数据...')
+    // 提取表格数据
     const tableData = extractTableData()
 
     if (tableData.length === 0) {
-      console.warn('[Content] 未提取到任何数据')
       return
     }
 
-    // 第四步：按仓库分组数据
-    console.log('[Content] 按仓库分组数据...')
-    const groupedData = groupDataByWarehouse(tableData)
+    // 过滤已发货的备货单号
+    const stockOrderNos = tableData.map(row => row.stockOrderNo)
+    const checkResult = await chrome.runtime.sendMessage({
+      type: 'CHECK_STOCK_ORDER_SHIPPED',
+      data: {
+        stockOrderNos
+      }
+    })
 
-    // 第五步：获取店铺名称
-    console.log('[Content] 获取店铺名称...')
+    // 过滤出未发货的订单
+    const unshippedOrderNos = new Set(checkResult.data?.notShipped || [])
+    const filteredTableData = tableData.filter(row => unshippedOrderNos.has(row.stockOrderNo))
+
+    if (filteredTableData.length === 0) {
+      return
+    }
+
+    // 按仓库分组数据
+    const groupedData = groupDataByWarehouse(filteredTableData)
+
+    // 获取所有仓库，按顺序处理
+    const warehouses = Object.keys(groupedData)
+    const targetWarehouses = warehouses
+
+    // 获取店铺名称
     const shopName = getShopName()
 
-    // 第六步：准备下载图片的数据和记录列表
+    // 第七步：准备下载图片的数据和记录列表
     // 只包含有货号的行，使用货号作为文件名
     const baseFolder = `JIT${getTodayDateString()}` // JIT+今天日期
     const finalShopName = shopName || '未知店铺'
-    
+
     // 创建数据记录列表，记录所有表格数据和对应的图片名称
     const dataRecordList: Array<{
       stockOrderNo: string // 备货单号
@@ -554,13 +1165,11 @@ async function startShippingDeskTasks(config: { warehouse: string; shippingMetho
       })).filter(group => group.rows.length > 0) // 过滤掉没有数据的仓库组
     }
 
-    console.log(`[Content] 数据记录列表已创建，共 ${dataRecordList.length} 条记录`)
-
     // 打印详细的表格数据信息
     console.log('[Content] ==================== 表格数据详情 ====================')
-    console.log(`[Content] 总共找到 ${tableData.length} 行数据`)
+    console.log(`[Content] 总共找到 ${tableData.length} 行数据（包含已发货），过滤后 ${filteredTableData.length} 行未发货`)
     console.log('[Content] 以下是每条数据的详细信息：')
-    tableData.forEach((row, index) => {
+    filteredTableData.forEach((row, index) => {
       console.log(`[Content] 行 ${index + 1}:`)
       console.log(`  - 备货单号: ${row.stockOrderNo}`)
       console.log(`  - 货号 (SKU): ${row.productCode}`)
@@ -571,39 +1180,23 @@ async function startShippingDeskTasks(config: { warehouse: string; shippingMetho
     })
     console.log('[Content] ==================== 表格数据详情结束 ====================')
 
-    // 打印下载分组数据
-    console.log('[Content] ==================== 下载分组数据 ====================')
-    downloadData.groupedData.forEach((group, groupIndex) => {
-      console.log(`[Content] 仓库组 ${groupIndex + 1}: ${group.warehouse}`)
-      console.log(`[Content] 该仓库共有 ${group.rows.length} 行需要下载`)
-      group.rows.forEach((row, rowIndex) => {
-        console.log(`  - 行 ${rowIndex + 1}: 货号=${row.fileName}, 图片=${row.imageUrl}`)
-      })
-    })
-    console.log('[Content] ==================== 下载分组数据结束 ====================')
-
-    // 第七步：将数据保存到background并开始下载图片
-    console.log('[Content] 将数据保存到background并开始下载图片...')
+    // 将数据保存到background并开始下载图片
     chrome.runtime.sendMessage({
       type: 'SAVE_SHIPPING_DESK_DATA_AND_DOWNLOAD_IMAGES',
       data: {
         ...downloadData,
-        dataRecordList // 包含数据记录列表
+        dataRecordList
       }
     }).catch((error) => {
       console.error('[Content] 保存数据到background失败:', error)
     })
 
-    // 第六步：根据用户选择的仓库，勾选对应仓库的所有行
-    // 如果用户选择的仓库在数据中存在，则勾选该仓库的所有行
-    if (groupedData[config.warehouse]) {
-      console.log(`[Content] 用户选择的仓库是 ${config.warehouse}，开始勾选该仓库的所有行...`)
-      await selectRowsByWarehouse(config.warehouse, groupedData)
-    } else {
-      console.warn(`[Content] 用户选择的仓库 ${config.warehouse} 在数据中不存在`)
-      // 列出所有可用的仓库
-      const availableWarehouses = Object.keys(groupedData)
-      console.log('[Content] 可用的仓库:', availableWarehouses)
+    // 等待1秒，确保页面状态稳定
+    await sleep(1000)
+
+    // 勾选第一行
+    if (targetWarehouses.length > 0) {
+      await selectRowsByWarehouse(targetWarehouses[0], groupedData)
     }
 
   } catch (error: any) {
