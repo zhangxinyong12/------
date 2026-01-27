@@ -236,27 +236,38 @@ const OptionsPage: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6 pb-24">
-      <div className="max-w-4xl mx-auto">
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 pb-24" style={{ width: "100%", maxWidth: "100%" }}>
+      {/* 主内容区域 - 居中且不占全屏 */}
+      <div style={{ maxWidth: "900px", margin: "0 auto", padding: "32px 24px" }}>
         <Space direction="vertical" size="large" style={{ width: "100%" }}>
-          {/* 标题 */}
-          <div className="text-center">
-            <Title level={2}>插件设置</Title>
+          {/* 标题区域 */}
+          <div className="text-center mb-6">
+            <Title level={2} className="!mb-2">插件设置</Title>
+            <p className="text-gray-500 text-sm">管理发货仓库和产品配置</p>
           </div>
 
           {/* 发货仓库配置 */}
-          <Card title="发货仓库配置" extra={<Button type="primary" icon={<SaveOutlined />} onClick={handleSave} loading={loading}>保存配置</Button>}>
+          <Card 
+            title={<span className="text-lg font-semibold">发货仓库配置</span>}
+            className="shadow-md hover:shadow-lg transition-shadow duration-300"
+            headStyle={{ borderBottom: "1px solid #f0f0f0", padding: "16px 24px" }}
+            bodyStyle={{ padding: "24px" }}>
             <Space direction="vertical" style={{ width: "100%" }} size="middle">
               {/* 添加新仓库 */}
-              <Space>
+              <Space className="w-full" wrap>
                 <Input
                   placeholder="输入新仓库名称"
                   value={newWarehouse}
                   onChange={(e) => setNewWarehouse(e.target.value)}
                   onPressEnter={handleAddWarehouse}
                   style={{ width: 300 }}
+                  className="rounded-lg"
                 />
-                <Button type="primary" icon={<PlusOutlined />} onClick={handleAddWarehouse}>
+                <Button 
+                  type="primary" 
+                  icon={<PlusOutlined />} 
+                  onClick={handleAddWarehouse}
+                  className="rounded-lg">
                   添加仓库
                 </Button>
               </Space>
@@ -265,8 +276,10 @@ const OptionsPage: React.FC = () => {
               <List
                 bordered
                 dataSource={warehouseOptions}
+                className="rounded-lg overflow-hidden"
                 renderItem={(item) => (
                   <List.Item
+                    className="hover:bg-gray-50 transition-colors duration-200"
                     actions={[
                       <Button
                         type="link"
@@ -288,18 +301,27 @@ const OptionsPage: React.FC = () => {
           </Card>
 
           {/* 产品配置 */}
-          <Card title="产品配置" extra={<Button type="primary" icon={<SaveOutlined />} onClick={handleSave} loading={loading}>保存配置</Button>}>
+          <Card 
+            title={<span className="text-lg font-semibold">产品配置</span>}
+            className="shadow-md hover:shadow-lg transition-shadow duration-300"
+            headStyle={{ borderBottom: "1px solid #f0f0f0", padding: "16px 24px" }}
+            bodyStyle={{ padding: "24px" }}>
             <Space direction="vertical" style={{ width: "100%" }} size="middle">
               {/* 添加新产品 */}
-              <Space>
+              <Space className="w-full" wrap>
                 <Input
                   placeholder="输入新产品名称"
                   value={newProduct}
                   onChange={(e) => setNewProduct(e.target.value)}
                   onPressEnter={handleAddProduct}
                   style={{ width: 300 }}
+                  className="rounded-lg"
                 />
-                <Button type="primary" icon={<PlusOutlined />} onClick={handleAddProduct}>
+                <Button 
+                  type="primary" 
+                  icon={<PlusOutlined />} 
+                  onClick={handleAddProduct}
+                  className="rounded-lg">
                   添加产品
                 </Button>
               </Space>
@@ -308,8 +330,10 @@ const OptionsPage: React.FC = () => {
               <List
                 bordered
                 dataSource={productOptions}
+                className="rounded-lg overflow-hidden"
                 renderItem={(item) => (
                   <List.Item
+                    className="hover:bg-gray-50 transition-colors duration-200"
                     actions={[
                       <Button
                         type="link"
@@ -333,17 +357,16 @@ const OptionsPage: React.FC = () => {
       </div>
 
       {/* 保存按钮 - 固定在底部 */}
-      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 py-4 px-6 shadow-lg z-50">
-        <div className="max-w-4xl mx-auto text-center">
+      <div className="flex justify-center fixed bottom-0 left-0 right-0 z-50 bg-white border-t border-gray-200 shadow-lg py-4 px-4">
           <Button
             type="primary"
             size="large"
             icon={<SaveOutlined />}
             onClick={handleSave}
-            loading={loading}>
+            loading={loading}
+            >
             保存所有配置
           </Button>
-        </div>
       </div>
     </div>
   )
