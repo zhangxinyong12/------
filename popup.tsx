@@ -198,6 +198,49 @@ const PopupPage: React.FC = () => {
   }
 
   /**
+   * 测试点击待仓库收货标签页
+   * 点击后自动切换到待仓库收货标签，并等待页面和表格加载
+   */
+  const handleTestWarehouseReceipt = async () => {
+    setLoading(true)
+
+    try {
+      // 获取当前活动标签页
+      const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true })
+      
+      if (!activeTab || !activeTab.id) {
+        throw new Error('无法获取当前标签页')
+      }
+
+      // 检查当前页面是否是shipping-list页面
+      const currentUrl = activeTab.url || ''
+      if (!currentUrl.includes('seller.kuajingmaihuo.com') || !currentUrl.includes('/main/order-manager/shipping-list')) {
+        message.warning('请先打开发货单列表页面（shipping-list）')
+        setLoading(false)
+        return
+      }
+
+      // 发送消息到content script，点击待仓库收货标签
+      const response = await chrome.tabs.sendMessage(activeTab.id, {
+        type: 'CLICK_WAREHOUSE_RECEIPT_TAB',
+        data: {}
+      })
+
+      if (response && response.success) {
+        message.success('已点击待仓库收货标签，等待页面加载...')
+      } else {
+        throw new Error('执行失败，未收到有效响应')
+      }
+    } catch (error: any) {
+      const errorMessage = error?.message || chrome.runtime.lastError?.message || '操作失败'
+      console.error('[Popup] 点击待仓库收货标签失败:', error)
+      message.error(`操作失败: ${errorMessage}`)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  /**
    * 处理表单提交
    * 开始批量自动发货
    * 保存用户配置到 background，并打开新窗口
@@ -383,6 +426,18 @@ const PopupPage: React.FC = () => {
                 block
                 size="large">
                 直接执行发货步骤（开发测试用）
+              </Button>
+            </Form.Item>
+
+            {/* 待仓库收货测试按钮 */}
+            <Form.Item>
+              <Button
+                type="default"
+                onClick={handleTestWarehouseReceipt}
+                loading={loading}
+                block
+                size="large">
+                待仓库收货测试
               </Button>
             </Form.Item>
           </Form>

@@ -4,6 +4,10 @@
  */
 
 import { findDom } from "./utils/dom"
+// @ts-ignore - html2canvas和jspdf的类型定义可能不完整
+import html2canvas from "html2canvas"
+// @ts-ignore - html2canvas和jspdf的类型定义可能不完整
+import { jsPDF } from "jspdf"
 
 /**
  * Sleep函数
@@ -1048,8 +1052,765 @@ async function selectAllOrdersForShipment() {
 }
 
 /**
+ * 将元素内的所有canvas转换为img标签
+ * 这样可以确保html2canvas能正确捕获canvas内容（特别是二维码）
+ * @param element 要处理的元素
+ */
+function convertCanvasToImage(element: HTMLElement): void {
+  // 获取元素所在的文档上下文（可能是主文档或iframe文档）
+  const ownerDocument = element.ownerDocument || document
+  
+  // 查找所有canvas元素
+  const canvases = element.querySelectorAll('canvas')
+  
+  canvases.forEach((canvas, index) => {
+    try {
+      // 将canvas转换为data URL
+      const dataURL = canvas.toDataURL('image/png')
+      
+      // 在正确的文档上下文中创建img元素
+      const img = ownerDocument.createElement('img')
+      img.src = dataURL
+      img.style.width = canvas.style.width || `${canvas.width}px`
+      img.style.height = canvas.style.height || `${canvas.height}px`
+      img.style.display = canvas.style.display || 'block'
+      img.style.visibility = canvas.style.visibility || 'visible'
+      
+      // 复制canvas的所有样式
+      if (canvas.style.cssText) {
+        img.style.cssText = canvas.style.cssText
+      }
+      
+      // 复制canvas的class和id
+      if (canvas.className) {
+        img.className = canvas.className
+      }
+      if (canvas.id) {
+        img.id = canvas.id
+      }
+      
+      // 替换canvas为img
+      if (canvas.parentNode) {
+        canvas.parentNode.insertBefore(img, canvas)
+        canvas.parentNode.removeChild(canvas)
+        console.log(`[Content] 已将canvas #${index} 转换为图片`)
+      }
+    } catch (error) {
+      console.warn(`[Content] 转换canvas #${index} 失败:`, error)
+    }
+  })
+}
+
+/**
+ * 生成PDF文件
+ * 将页面内容转换为PDF并下载
+ * @param element 要转换为PDF的元素（可选，默认使用整个body）
+ * @param fileName PDF文件名（可选，默认使用时间戳）
+ */
+async function generatePDF(element?: HTMLElement, fileName?: string): Promise<void> {
+  try {
+    console.log('[Content] 开始生成PDF...')
+    
+    // 确定要转换的元素
+    const targetElement = element || document.body
+    
+    // 在转换前，将元素内的所有canvas转换为img标签
+    // 这样可以确保html2canvas能正确捕获canvas内容（特别是二维码）
+    console.log('[Content] 正在将canvas转换为图片以确保正确捕获...')
+    convertCanvasToImage(targetElement)
+    
+    // 额外等待一小段时间确保图片已加载
+    await sleep(100)
+    
+    // 使用html2canvas将元素转换为canvas
+    console.log('[Content] 正在将页面内容转换为图片...')
+    const canvas = await html2canvas(targetElement, {
+      scale: 2, // 提高清晰度
+      useCORS: true, // 允许跨域图片
+      allowTaint: true, // 允许读取canvas内容（重要：用于捕获二维码canvas）
+      logging: false, // 关闭日志
+      backgroundColor: '#ffffff', // 白色背景
+      foreignObjectRendering: false // 禁用foreignObject渲染，确保canvas能被正确捕获
+    })
+    
+    // 获取canvas的宽高（像素转毫米，1英寸=25.4毫米，DPI通常为96）
+    const imgWidth = canvas.width
+    const imgHeight = canvas.height
+    const pdfWidth = (imgWidth * 25.4) / 96 // 转换为毫米
+    const pdfHeight = (imgHeight * 25.4) / 96 // 转换为毫米
+    
+    // 创建PDF对象（A4纸张大小：210mm x 297mm）
+    const pdf = new jsPDF({
+      orientation: pdfWidth > pdfHeight ? 'landscape' : 'portrait',
+      unit: 'mm',
+      format: [pdfWidth, pdfHeight] // 使用实际尺寸
+    })
+    
+    // 将canvas转换为图片并添加到PDF
+    const imgData = canvas.toDataURL('image/png')
+    pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight)
+    
+    // 生成文件名
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5)
+    const finalFileName = fileName || `打印标签_${timestamp}.pdf`
+    
+    // 保存PDF文件
+    pdf.save(finalFileName)
+    
+    console.log('[Content] PDF文件已生成并下载:', finalFileName)
+    
+    // 通知background脚本PDF已生成
+    chrome.runtime.sendMessage({
+      type: 'PDF_GENERATED',
+      data: {
+        fileName: finalFileName,
+        timestamp: Date.now()
+      }
+    }).catch((error) => {
+      console.error('[Content] 发送PDF生成通知失败:', error)
+    })
+  } catch (error: any) {
+    console.error('[Content] 生成PDF时发生错误:', error)
+    throw error
+  }
+}
+
+
+
+
+/**
+ * 设置打印接口拦截监听器
+ * 通过background脚本注入拦截脚本到页面上下文，然后监听postMessage事件接收打印接口响应
+ * @returns Promise，当注入完成时resolve
+ */
+function interceptPrintAPI(): Promise<void> {
+  console.log('[Content] 开始设置打印接口拦截监听器...')
+  
+  // 检查是否已经设置过监听器
+  if ((window as any).__printAPIListenerSetup) {
+    console.log('[Content] 打印接口监听器已设置，跳过')
+    return Promise.resolve()
+  }
+  
+  // 标记监听器已设置
+  ;(window as any).__printAPIListenerSetup = true
+  
+  // 请求background脚本注入拦截脚本到页面上下文，并返回Promise
+  return chrome.runtime.sendMessage({
+    type: 'INJECT_PRINT_INTERCEPTOR'
+  }).then((response) => {
+    if (response && response.success) {
+      console.log('[Content] 打印接口拦截脚本注入成功')
+    } else {
+      console.error('[Content] 打印接口拦截脚本注入失败:', response)
+      throw new Error('注入脚本失败')
+    }
+  }).catch((error) => {
+    console.error('[Content] 请求注入打印接口拦截脚本失败:', error)
+    throw error
+  })
+  
+  // 监听来自注入脚本的postMessage事件
+  window.addEventListener('message', async (event) => {
+    // 验证消息来源，确保来自注入脚本
+    if (event.data && event.data.type === 'PRINT_API_RESPONSE' && event.data.source === 'injected-script') {
+      console.log('[Content] 收到打印接口响应:', event.data.data)
+      
+      try {
+        const printData = event.data.data
+        
+        // 保存打印数据
+        await chrome.storage.local.set({
+          lastPrintData: {
+            url: printData.url,
+            data: printData.data,
+            timestamp: printData.timestamp
+          }
+        })
+        
+        console.log('[Content] 打印数据已保存，等待打印预览窗口打开...')
+        
+        // 设置一个标记，表示有打印数据等待处理
+        ;(window as any).__hasPrintData = true
+        
+      } catch (error: any) {
+        console.error('[Content] 处理打印接口响应失败:', error)
+      }
+    }
+  })
+  
+  console.log('[Content] 打印接口拦截监听器已设置')
+}
+
+/**
+ * 渲染打印标签内容
+ * 根据接口返回的数据生成打印标签的HTML
+ * @param data 接口返回的数据
+ * @returns HTML字符串
+ */
+function renderPrintLabel(data: any): string {
+  try {
+    console.log('[Content] 开始渲染打印标签，数据:', data)
+    
+    // 如果数据是字符串（HTML），直接返回
+    if (typeof data === 'string') {
+      // 检查是否是HTML字符串
+      if (data.trim().startsWith('<')) {
+        return data
+      }
+    }
+    
+    // 如果数据包含HTML内容
+    if (data && (data.html || data.content || data.data)) {
+      const html = data.html || data.content || data.data
+      if (typeof html === 'string' && html.trim().startsWith('<')) {
+        return html
+      }
+    }
+    
+    // 解析接口返回的数据结构
+    // 数据结构：{ success: true, result: [{ ... }] }
+    let labelData: any = null
+    
+    // 如果数据有result字段且是数组，取第一个元素
+    if (data && data.result && Array.isArray(data.result) && data.result.length > 0) {
+      labelData = data.result[0]
+      console.log('[Content] 从result数组中提取第一个标签数据')
+    } else if (data && Array.isArray(data) && data.length > 0) {
+      // 如果数据本身就是数组，取第一个元素
+      labelData = data[0]
+      console.log('[Content] 数据是数组，提取第一个元素')
+    } else if (data && typeof data === 'object') {
+      // 如果数据本身就是对象，直接使用
+      labelData = data
+      console.log('[Content] 数据是对象，直接使用')
+    } else {
+      throw new Error('无法解析打印标签数据')
+    }
+    
+    // 从labelData中提取字段（根据实际接口数据结构）
+    // 仓库名称（去除"（前置收货）"后缀）
+    const warehouseFull = labelData?.subWarehouseName || ''
+    const warehouse = warehouseFull.replace(/\s*[（(]前置收货[）)]\s*$/, '')
+    
+    // JIT标识（根据purchaseStockType判断，1可能是JIT）
+    const isJIT = labelData?.purchaseStockType === 1 || false
+    
+    // 加急标识（urgencyType === 1 表示加急）
+    const isUrgent = labelData?.urgencyType === 1 || false
+    
+    // 店铺名称
+    const shopName = labelData?.supplierName || 'Fk Style'
+    
+    // 打印时间（deliverTime是时间戳，转换为日期时间字符串）
+    const deliverTime = labelData?.deliverTime
+    let printTime = new Date().toLocaleString('zh-CN', { 
+      year: 'numeric', 
+      month: '2-digit', 
+      day: '2-digit', 
+      hour: '2-digit', 
+      minute: '2-digit', 
+      second: '2-digit',
+      hour12: false
+    }).replace(/\//g, '-')
+    if (deliverTime) {
+      const date = new Date(deliverTime)
+      printTime = date.toLocaleString('zh-CN', { 
+        year: 'numeric', 
+        month: '2-digit', 
+        day: '2-digit', 
+        hour: '2-digit', 
+        minute: '2-digit', 
+        second: '2-digit',
+        hour12: false
+      }).replace(/\//g, '-')
+    }
+    
+    // 产品名称
+    const productName = labelData?.productName || ''
+    
+    // SKC ID
+    const skcId = labelData?.productSkcId || ''
+    
+    // SKU/货号（skcExtCode或nonClothSkuExtCode）
+    const sku = labelData?.skcExtCode || labelData?.nonClothSkuExtCode || ''
+    
+    // 数量（packageSkcNum或deliverSkcNum）
+    const quantity = labelData?.packageSkcNum || labelData?.deliverSkcNum || 1
+    
+    // 包裹号
+    const packageNo = labelData?.packageSn || ''
+    
+    // 包裹索引和总数
+    const packageIndex = labelData?.packageIndex || 1
+    const totalPackages = labelData?.totalPackageNum || 1
+    
+    // 司机信息
+    const driverName = labelData?.driverName || ''
+    const driverPhone = labelData?.driverPhone || ''
+    
+    // 发货方式（deliveryMethod: 1=自送）
+    const deliveryMethodCode = labelData?.deliveryMethod
+    let deliveryMethod = '自行配送'
+    if (deliveryMethodCode === 1) {
+      deliveryMethod = '自行配送'
+    } else if (deliveryMethodCode === 2) {
+      deliveryMethod = '自行委托第三方物流'
+    } else if (deliveryMethodCode === 3) {
+      deliveryMethod = '在线物流下单'
+    }
+    
+    // 产品规格（从nonClothSecondarySpecVOList中提取）
+    let productSpec = ''
+    if (labelData?.nonClothSecondarySpecVOList && Array.isArray(labelData.nonClothSecondarySpecVOList)) {
+      const specs = labelData.nonClothSecondarySpecVOList.map((spec: any) => spec.specName).filter(Boolean)
+      if (specs.length > 0) {
+        productSpec = specs.join('、')
+      }
+    }
+    
+    // 如果产品名称中包含规格，提取出来
+    let productNameDisplay = productName
+    if (productSpec && productName.includes('【')) {
+      // 保持原有的规格格式
+      productNameDisplay = productName
+    } else if (productSpec) {
+      productNameDisplay = `${productName}【${productSpec}】`
+    }
+    
+    // 生成打印标签HTML（100x100mm尺寸）
+    // 二维码内容为packageSn
+    const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
+  <style>
+    @page {
+      size: 100mm 100mm;
+      margin: 0;
+    }
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: Arial, "Microsoft YaHei", sans-serif;
+      background: white;
+      width: 100mm;
+      height: 100mm;
+      overflow: hidden;
+    }
+    .print-label {
+      width: 100mm;
+      height: 100mm;
+      background: white;
+      padding: 3mm 4mm;
+      border: 1px solid #000;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+    }
+    .label-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 2mm;
+    }
+    .label-header-left {
+      flex: 1;
+    }
+    .warehouse-name {
+      font-size: 3.5mm;
+      font-weight: bold;
+      margin-bottom: 1mm;
+      line-height: 1.2;
+    }
+    .label-tags {
+      display: inline-flex;
+      gap: 2mm;
+      margin-bottom: 2mm;
+      flex-wrap: wrap;
+    }
+    .tag-jit {
+      background: #000;
+      color: #fff;
+      padding: 1mm 2mm;
+      font-size: 2.5mm;
+      font-weight: bold;
+      display: inline-block;
+    }
+    .tag-urgent {
+      background: #fff;
+      color: #000;
+      border: 1px solid #000;
+      padding: 1mm 2mm;
+      font-size: 2.5mm;
+      font-weight: bold;
+      display: inline-block;
+    }
+    .qr-code-container {
+      width: 18mm;
+      height: 18mm;
+      border: 1px solid #000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: white;
+    }
+    .qr-code-container canvas {
+      width: 100% !important;
+      height: 100% !important;
+    }
+    .shop-info {
+      font-size: 2.8mm;
+      font-weight: 500;
+      margin-bottom: 1mm;
+    }
+    .print-time {
+      font-size: 2.2mm;
+      color: #333;
+      margin-bottom: 2mm;
+    }
+    .product-info {
+      margin-bottom: 2mm;
+    }
+    .product-name {
+      font-size: 2.5mm;
+      line-height: 1.3;
+      margin-bottom: 1.5mm;
+      word-wrap: break-word;
+    }
+    .sku-info {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 2mm;
+    }
+    .sku-codes {
+      font-size: 2.2mm;
+      line-height: 1.4;
+    }
+    .sku-codes div {
+      margin-bottom: 0.5mm;
+    }
+    .quantity {
+      font-size: 3.5mm;
+      font-weight: bold;
+      color: #000;
+    }
+    .package-info {
+      margin-bottom: 2mm;
+    }
+    .package-no {
+      font-size: 3.2mm;
+      font-weight: bold;
+      margin-bottom: 0.5mm;
+    }
+    .package-count {
+      font-size: 2.2mm;
+      color: #333;
+    }
+    .barcode {
+      width: 100%;
+      height: 8mm;
+      border: 1px solid #000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 2mm;
+      color: #000;
+      margin-bottom: 2mm;
+      background: white;
+      font-family: "Courier New", monospace;
+      position: relative;
+    }
+    .barcode svg {
+      width: 100% !important;
+      height: 100% !important;
+      max-height: 8mm;
+    }
+    .barcode-text {
+      position: absolute;
+      bottom: 0;
+      font-size: 1.8mm;
+      font-weight: bold;
+    }
+    .delivery-info {
+      font-size: 2.2mm;
+      color: #333;
+      line-height: 1.4;
+    }
+    @media print {
+      .print-label {
+        border: 1px solid #000;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="print-label">
+    <div class="label-header">
+      <div class="label-header-left">
+        <div class="warehouse-name">${warehouse}</div>
+        <div class="label-tags">
+          ${isJIT ? '<span class="tag-jit">JIT</span>' : ''}
+          ${isUrgent ? '<span class="tag-urgent">加急</span>' : ''}
+        </div>
+      </div>
+      <div class="qr-code-container" id="qrCode"></div>
+    </div>
+    <div class="shop-info">${shopName}</div>
+    <div class="print-time">${printTime}</div>
+    <div class="product-info">
+      <div class="product-name">${productNameDisplay}</div>
+      <div class="sku-info">
+        <div class="sku-codes">
+          <div>SKC${skcId}</div>
+          <div>SKU货号${sku}</div>
+        </div>
+        <div class="quantity">${quantity}件</div>
+      </div>
+    </div>
+    <div class="package-info">
+      <div class="package-no">${packageNo}</div>
+      <div class="package-count">第${packageIndex}包 (共${totalPackages}包)</div>
+    </div>
+    <div class="barcode">
+      <svg id="barcode"></svg>
+      <div class="barcode-text">${packageNo}</div>
+    </div>
+    <div class="delivery-info">${deliveryMethod}${driverName ? ' · 司机' + driverName : ''}${driverPhone ? ' · 手机号:' + driverPhone : ''}</div>
+  </div>
+  <script>
+    // 生成二维码和条形码，内容为packageSn
+    (function() {
+      const packageSn = '${packageNo}';
+      
+      // 生成二维码
+      function generateQRCode() {
+        const qrCodeContainer = document.getElementById('qrCode');
+        if (!qrCodeContainer || !packageSn) return;
+        
+        // 等待QRCode库加载
+        let retryCount = 0;
+        const maxRetries = 20;
+        
+        function tryGenerateQR() {
+          if (typeof QRCode !== 'undefined') {
+            QRCode.toCanvas(qrCodeContainer, packageSn, {
+              width: 18 * 3.779527559, // 18mm转换为像素（1mm = 3.779527559px at 96dpi）
+              margin: 1,
+              color: {
+                dark: '#000000',
+                light: '#FFFFFF'
+              }
+            }, function (error) {
+              if (error) {
+                console.error('生成二维码失败:', error);
+                qrCodeContainer.innerHTML = '<div style="font-size: 2mm; color: #999;">QR</div>';
+              } else {
+                console.log('二维码生成成功');
+                // 通知二维码已生成
+                window.dispatchEvent(new CustomEvent('qrCodeGenerated'));
+              }
+            });
+          } else {
+            retryCount++;
+            if (retryCount < maxRetries) {
+              setTimeout(tryGenerateQR, 100);
+            } else {
+              console.error('QRCode库加载超时');
+              qrCodeContainer.innerHTML = '<div style="font-size: 2mm; color: #999;">QR</div>';
+            }
+          }
+        }
+        
+        tryGenerateQR();
+      }
+      
+      // 生成条形码
+      function generateBarcode() {
+        const barcodeSvg = document.getElementById('barcode');
+        if (!barcodeSvg || !packageSn) return;
+        
+        // 等待JsBarcode库加载
+        let retryCount = 0;
+        const maxRetries = 20;
+        
+        function tryGenerateBarcode() {
+          if (typeof JsBarcode !== 'undefined') {
+            try {
+              JsBarcode(barcodeSvg, packageSn, {
+                format: "CODE128",
+                width: 1.5,
+                height: 50,
+                displayValue: false, // 不显示文本，因为我们用单独的div显示
+                background: "#FFFFFF",
+                lineColor: "#000000",
+                margin: 2
+              });
+              console.log('条形码生成成功');
+              // 通知条形码已生成
+              window.dispatchEvent(new CustomEvent('barcodeGenerated'));
+            } catch (error) {
+              console.error('生成条形码失败:', error);
+            }
+          } else {
+            retryCount++;
+            if (retryCount < maxRetries) {
+              setTimeout(tryGenerateBarcode, 100);
+            } else {
+              console.error('JsBarcode库加载超时');
+            }
+          }
+        }
+        
+        tryGenerateBarcode();
+      }
+      
+      // 页面加载完成后生成二维码和条形码
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', function() {
+          generateQRCode();
+          generateBarcode();
+        });
+      } else {
+        generateQRCode();
+        generateBarcode();
+      }
+    })();
+  </script>
+</body>
+</html>
+    `
+    
+    return html.trim()
+  } catch (error: any) {
+    console.error('[Content] 渲染打印标签失败:', error)
+    return `<div>渲染失败: ${error.message}</div>`
+  }
+}
+
+/**
+ * 渲染打印内容（通用方法，保留兼容性）
+ * 根据接口返回的数据生成HTML内容
+ * @param data 接口返回的数据
+ * @returns HTML字符串
+ */
+function renderPrintContent(data: any): string {
+  try {
+    // 如果数据是字符串，直接返回
+    if (typeof data === 'string') {
+      return data
+    }
+    
+    // 如果数据包含HTML内容
+    if (data.html || data.content || data.data) {
+      const html = data.html || data.content || data.data
+      if (typeof html === 'string') {
+        return html
+      }
+    }
+    
+    // 如果数据是数组，渲染列表
+    if (Array.isArray(data)) {
+      return data.map((item, index) => {
+        if (typeof item === 'string') {
+          return `<div>${item}</div>`
+        }
+        return `<div>${JSON.stringify(item)}</div>`
+      }).join('')
+    }
+    
+    // 默认渲染JSON格式
+    return `<pre>${JSON.stringify(data, null, 2)}</pre>`
+  } catch (error: any) {
+    console.error('[Content] 渲染打印内容失败:', error)
+    return `<div>渲染失败: ${error.message}</div>`
+  }
+}
+
+/**
+ * 从打印预览页面获取PDF内容
+ * 通过监听打印预览页面的URL变化来获取PDF
+ * 注意：这个方法需要配合background脚本使用
+ */
+async function capturePrintPreviewPDF(): Promise<void> {
+  try {
+    console.log('[Content] 尝试从打印预览页面获取PDF...')
+    
+    // 等待打印预览页面出现
+    // Chrome的打印预览页面URL格式：chrome-extension://[extension-id]/[uuid]
+    // 我们无法直接访问这个URL，但可以通过监听打印事件来捕获内容
+    
+    // 监听打印事件，在打印前捕获页面内容
+    window.addEventListener('beforeprint', async () => {
+      console.log('[Content] 检测到打印事件，准备生成PDF...')
+      
+      // 等待打印预览页面加载
+      await sleep(2000)
+      
+      // 尝试获取之前保存的打印数据
+      const printData = await chrome.storage.local.get('lastPrintData')
+      if (printData.lastPrintData) {
+        console.log('[Content] 使用保存的打印数据生成PDF')
+        
+        // 创建隐藏iframe渲染内容
+        const iframe = document.createElement('iframe')
+        iframe.style.position = 'fixed'
+        iframe.style.top = '-9999px'
+        iframe.style.left = '-9999px'
+        iframe.style.width = '210mm'
+        iframe.style.height = '297mm'
+        document.body.appendChild(iframe)
+        
+        await new Promise((resolve) => {
+          iframe.onload = resolve
+          iframe.contentDocument!.open()
+          iframe.contentDocument!.write(`
+            <!DOCTYPE html>
+            <html>
+              <head>
+                <meta charset="UTF-8">
+                <style>
+                  body { margin: 0; padding: 20px; font-family: Arial, sans-serif; }
+                </style>
+              </head>
+              <body>
+                ${renderPrintContent(printData.lastPrintData.data)}
+              </body>
+            </html>
+          `)
+          iframe.contentDocument!.close()
+        })
+        
+        await sleep(1000)
+        
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5)
+        await generatePDF(iframe.contentDocument!.body, `打印标签_${timestamp}.pdf`)
+        
+        document.body.removeChild(iframe)
+      } else {
+        // 如果没有保存的数据，尝试从当前页面生成PDF
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5)
+        await generatePDF(undefined, `打印标签_${timestamp}.pdf`)
+      }
+    })
+    
+  } catch (error: any) {
+    console.error('[Content] 捕获打印预览PDF时发生错误:', error)
+  }
+}
+
+/**
  * 点击"批量打印商品打包标签"按钮
- * 点击后会触发浏览器打印，等待3秒后关闭打印弹窗
+ * 点击后会触发浏览器打印，自动生成PDF文件
  */
 async function clickBatchPrintLabelButton() {
   console.log('[Content] 查找并点击批量打印商品打包标签按钮...')
@@ -1068,95 +1829,35 @@ async function clickBatchPrintLabelButton() {
     return false
   }
 
-    printButton.click()
-    console.log('[Content] 已点击批量打印商品打包标签按钮')
+  // 注入脚本应该在页面加载时就已经注入，这里不需要再次注入
+  // 只需要标记PDF监听器已设置
+  if (!(window as any).__printPDFListenerSetup) {
+    ;(window as any).__printPDFListenerSetup = true
+  }
+
+  printButton.click()
+  console.log('[Content] 已点击批量打印商品打包标签按钮')
+  
+  // 等待弹窗出现
+  await sleep(1000)
+  
+  // 检查是否有弹窗出现
+  let hasClickedContinuePrint = false
+  const modalWrapper = document.querySelector('div[data-testid="beast-core-modal-innerWrapper"]')
+  console.log('[Content] 检测到弹窗，弹窗文本:', modalWrapper)
+  if (modalWrapper) {
     
-    // 等待弹窗出现
-    await sleep(1000)
-    
-    // 检查是否有弹窗出现
-    let hasClickedContinuePrint = false
-    const modalWrapper = document.querySelector('div[data-testid="beast-core-modal-innerWrapper"]')
-    
-    if (modalWrapper) {
-      const modalText = modalWrapper.textContent || ''
-      console.log('[Content] 检测到弹窗，弹窗文本:', modalText.substring(0, 200))
-      
-      // 情况1：警告弹窗（"部分发货单已打印过打包标签"）
-      if (modalText.includes('部分发货单已打印过打包标签') || modalText.includes('不支持批量打印')) {
-        console.log('[Content] 检测到警告弹窗，准备点击"我知道了"按钮')
-        
-        // 查找"我知道了"按钮
-        const knowButton = await findButtonByText(
-          'button[data-testid="beast-core-button"]',
-          '我知道了',
-          {
-            timeout: 5000,
-            interval: 200,
-            parent: modalWrapper as Element
-          }
-        )
-        
-        if (knowButton) {
-          knowButton.click()
-          console.log('[Content] 已点击"我知道了"按钮')
-          await sleep(1000)
-          return true
-        } else {
-          console.warn('[Content] 未找到"我知道了"按钮')
-        }
+    const knowButton =  modalWrapper.querySelector(
+        'button[data-testid="beast-core-button"]' ) as HTMLElement
+console.log('[Content] 检测到我知道了按钮，按钮文本:', knowButton)
+      if (knowButton) {
+        knowButton.click()
+        hasClickedContinuePrint = true
       }
       
-      // 情况2：打印顺序选择弹窗（"已选1个发货单，请选择打包标签打印顺序"）
-      if (modalText.includes('已选') && modalText.includes('个发货单') && modalText.includes('请选择打包标签打印顺序')) {
-        console.log('[Content] 检测到打印顺序选择弹窗，准备点击"继续打印"按钮')
-        
-        // 查找"继续打印"按钮
-        const continuePrintButton = await findButtonByText(
-          'button[data-testid="beast-core-button"]',
-          '继续打印',
-          {
-            timeout: 5000,
-            interval: 200,
-            parent: modalWrapper as Element
-          }
-        )
-        
-        if (continuePrintButton) {
-          console.log('[Content] 找到"继续打印"按钮，准备点击...')
-          continuePrintButton.click()
-          console.log('[Content] 已点击"继续打印"按钮，系统将自动触发打印事件')
-          hasClickedContinuePrint = true
-          await sleep(3000) // 等待3秒，让系统打印弹窗完全出现
-          console.log('[Content] 系统打印弹窗应该已出现，准备刷新页面关闭...')
-          
-          // 刷新页面来关闭系统打印弹窗
-          console.log('[Content] 刷新页面来关闭系统打印弹窗...')
-          window.location.reload()
-          
-          console.log('[Content] 已刷新页面')
-          return true
-        } else {
-          console.warn('[Content] 未找到"继续打印"按钮')
-        }
-      }
-    } else {
-      console.log('[Content] 未检测到任何弹窗')
-    }
+  } 
     
-    // 只有在没有点击"继续打印"按钮的情况下，才执行关闭打印弹窗的逻辑
-    if (!hasClickedContinuePrint) {
-      console.log('[Content] 等待3秒后刷新页面来关闭打印弹窗...')
-      await sleep(3000)
-      
-      // 刷新页面来关闭系统打印弹窗
-      console.log('[Content] 刷新页面来关闭系统打印弹窗...')
-      window.location.reload()
-      
-      console.log('[Content] 已刷新页面')
-    }
-    
-    return true
+  return true
 }
 
 /**
@@ -1769,6 +2470,1191 @@ async function testClosePrintDialog() {
     return true
   } catch (error: any) {
     console.error('[Content] 测试关闭打印弹窗时发生错误:', error)
+    return false
+  }
+}
+
+/**
+ * 从表格行中提取备货单号
+ * @param row 表格行元素
+ * @returns 备货单号，如果未找到则返回空字符串
+ */
+function extractStockOrderNoFromRow(row: HTMLElement): string {
+  try {
+    // 查找包含"备货单号："文本的div元素（data-testid="beast-core-box"）
+    const stockOrderDivs = row.querySelectorAll('div[data-testid="beast-core-box"]')
+    for (const div of Array.from(stockOrderDivs)) {
+      const text = div.textContent || ''
+      if (text.includes('备货单号：')) {
+        // 在div中查找a标签，提取备货单号
+        const stockOrderLink = div.querySelector('a[data-testid="beast-core-button-link"]')
+        if (stockOrderLink) {
+          const stockOrderNo = stockOrderLink.textContent?.trim() || ''
+          if (stockOrderNo) {
+            return stockOrderNo
+          }
+        }
+      }
+    }
+    return ''
+  } catch (error: any) {
+    console.error('[Content] 提取备货单号时发生错误:', error)
+    return ''
+  }
+}
+
+/**
+ * 监听并处理 blob URL，生成 PDF
+ * @param blobURL blob URL
+ * @param fileName PDF文件名（不含扩展名）
+ */
+async function handleBlobURLAndGeneratePDF(blobURL: string, fileName: string): Promise<void> {
+  try {
+    console.log(`[Content] 开始处理 blob URL: ${blobURL}`)
+    
+    // 使用 fetch 获取 blob 内容
+    const response = await fetch(blobURL)
+    const blob = await response.blob()
+    
+    // 将 blob 转换为文本
+    const text = await blob.text()
+    console.log(`[Content] 获取到 blob 内容，长度: ${text.length}`)
+    
+    // 创建隐藏的 iframe 来渲染 blob 内容
+    const iframe = document.createElement('iframe')
+    iframe.style.position = 'fixed'
+    iframe.style.top = '-9999px'
+    iframe.style.left = '-9999px'
+    iframe.style.width = '210mm'
+    iframe.style.height = '297mm'
+    iframe.style.border = 'none'
+    document.body.appendChild(iframe)
+    
+    // 等待 iframe 加载
+    await new Promise<void>((resolve) => {
+      iframe.onload = () => resolve()
+      iframe.src = blobURL
+    })
+    
+    // 等待内容渲染
+    await sleep(2000)
+    
+    // 从 iframe 中生成 PDF
+    const iframeBody = iframe.contentDocument?.body
+    if (iframeBody) {
+      const pdfFileName = `${fileName}.pdf`
+      await generatePDF(iframeBody, pdfFileName)
+      console.log(`[Content] PDF 已生成: ${pdfFileName}`)
+    } else {
+      console.error('[Content] 无法获取 iframe body')
+    }
+    
+    // 移除 iframe
+    document.body.removeChild(iframe)
+  } catch (error: any) {
+    console.error('[Content] 处理 blob URL 并生成 PDF 时发生错误:', error)
+  }
+}
+
+/**
+ * 监听 blob URL 的创建（针对特定域名）
+ * 使用全局监听器，在点击"继续打印"时设置标记，然后捕获下一个匹配的 blob URL
+ * @param expectedDomain 期望的域名（如 seller.kuajingmaihuo.com）
+ * @param timeout 超时时间（毫秒）
+ * @returns Promise，resolve 时返回 blob URL
+ */
+function waitForBlobURL(expectedDomain: string, timeout: number = 10000): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const startTime = Date.now()
+    
+    // 创建一个唯一的标记ID
+    const markerId = `blob_listener_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+    
+    // 设置全局标记，表示正在等待 blob URL
+    ;(window as any).__waitingForBlobURL = markerId
+    
+    // 保存原始的 createObjectURL 函数（如果还没有保存）
+    if (!(window as any).__originalCreateObjectURL) {
+      ;(window as any).__originalCreateObjectURL = URL.createObjectURL
+    }
+    const originalCreateObjectURL = (window as any).__originalCreateObjectURL
+    
+    // 创建一个临时的拦截器
+    const blobInterceptor = function(blob: Blob | MediaSource): string {
+      const blobURL = originalCreateObjectURL.call(URL, blob)
+      
+      // 检查是否正在等待，且是目标域名的 blob URL
+      if ((window as any).__waitingForBlobURL === markerId && blobURL.includes(expectedDomain)) {
+        console.log(`[Content] 检测到目标 blob URL: ${blobURL}`)
+        
+        // 清除等待标记
+        ;(window as any).__waitingForBlobURL = null
+        
+        // 清除超时检查
+        clearTimeout(timeoutId)
+        
+        resolve(blobURL)
+        return blobURL
+      }
+      
+      return blobURL
+    }
+    
+    // 设置拦截器
+    URL.createObjectURL = blobInterceptor as typeof URL.createObjectURL
+    
+    // 设置超时
+    const timeoutId = setTimeout(() => {
+      // 清除等待标记
+      if ((window as any).__waitingForBlobURL === markerId) {
+        ;(window as any).__waitingForBlobURL = null
+      }
+      
+      // 恢复原始函数（如果当前还是我们的拦截器）
+      if (URL.createObjectURL === blobInterceptor) {
+        URL.createObjectURL = originalCreateObjectURL
+      }
+      
+      reject(new Error('等待 blob URL 超时'))
+    }, timeout)
+  })
+}
+
+/**
+ * 点击待仓库收货标签页
+ * 查找并点击"待仓库收货"标签，然后等待页面和表格加载完成
+ */
+async function clickWarehouseReceiptTab() {
+  console.log('[Content] ============== 开始点击待仓库收货标签 =============')
+  
+  try {
+    // 查找包含"待仓库收货"文本的标签元素
+    // 根据用户提供的HTML结构，标签在 data-testid="beast-core-tab-itemLabel" 的div中
+    const tabLabels = document.querySelectorAll('div[data-testid="beast-core-tab-itemLabel"]')
+    
+    let targetTab: HTMLElement | null = null
+    
+    // 遍历所有标签，查找文本内容为"待仓库收货"的标签
+    for (const label of Array.from(tabLabels)) {
+      const labelText = label.textContent?.trim() || ''
+      console.log('[Content] 检查标签:', labelText)
+      
+      if (labelText === '待仓库收货') {
+        // 找到目标标签，向上查找可点击的父元素
+        // 根据HTML结构，可点击的元素应该是包含 data-testid="beast-core-tab-itemLabel-wrapper" 的div
+        const wrapper = label.closest('div[data-testid="beast-core-tab-itemLabel-wrapper"]')
+        
+        if (wrapper) {
+          targetTab = wrapper as HTMLElement
+          console.log('[Content] 找到待仓库收货标签')
+          break
+        }
+      }
+    }
+    
+    if (!targetTab) {
+      console.error('[Content] 未找到待仓库收货标签')
+      return false
+    }
+    
+    // 检查标签是否已经激活（已选中）
+    // 由于class是动态的，通过检查是否包含TAB_active相关的class来判断
+    const isActive = Array.from(targetTab.classList).some(className => className.includes('TAB_active'))
+    if (isActive) {
+      console.log('[Content] 待仓库收货标签已经激活，无需点击')
+    } else {
+      // 点击标签
+      console.log('[Content] 点击待仓库收货标签...')
+      targetTab.click()
+      console.log('[Content] 已点击待仓库收货标签')
+    }
+    
+    // 等待3秒，让页面加载和表格加载
+    console.log('[Content] 等待3秒，让页面和表格加载...')
+    await sleep(3000)
+    
+    // 验证表格是否已加载（查找分页元素）
+    const paginationElement = await findDom('ul[data-testid="beast-core-pagination"]', {
+      timeout: 10000,
+      interval: 200
+    })
+    
+    if (paginationElement) {
+      console.log('[Content] 表格已加载完成')
+    } else {
+      console.warn('[Content] 表格可能未完全加载，但继续执行')
+    }
+    
+    // 等待表格完全渲染
+    await sleep(2000)
+    
+    // ========== 第一部分：主动流程 - 依次触发各种点击事件 ==========
+    console.log('[Content] ========== 【主动流程】开始依次触发点击事件 ==========')
+    
+    // 步骤1：点击全选checkbox
+    console.log('[Content] 【主动流程】步骤1：查找并点击全选checkbox')
+    const checkboxes = document.querySelectorAll('input[type="checkbox"]')
+    let selectAllCheckbox: HTMLElement | null = null
+    
+    // 查找全选checkbox（通常是表头的第一个checkbox）
+    for (const checkbox of Array.from(checkboxes)) {
+      const checkboxElement = checkbox as HTMLElement
+      // 检查是否在表头区域（thead）
+      const isInHeader = checkbox.closest('thead') !== null
+      if (isInHeader) {
+        selectAllCheckbox = checkboxElement
+        console.log('[Content] 【主动流程】找到全选checkbox')
+        break
+      }
+    }
+    
+    if (!selectAllCheckbox) {
+      console.error('[Content] 【主动流程】未找到全选checkbox')
+      return false
+    }
+    
+    // 检查是否已选中，如果未选中则点击
+    const isChecked = (selectAllCheckbox as HTMLInputElement).checked
+    if (!isChecked) {
+      console.log('[Content] 【主动流程】点击全选checkbox...')
+      selectAllCheckbox.click()
+      console.log('[Content] 【主动流程】已点击全选checkbox')
+      await sleep(1000) // 等待选中状态更新
+    } else {
+      console.log('[Content] 【主动流程】表格已全选，跳过点击')
+    }
+    
+    // 步骤2：处理全选后可能出现的弹窗
+    console.log('[Content] 【主动流程】步骤2：检查并处理全选后的弹窗')
+    await sleep(500) // 等待弹窗出现
+    const modalWrapperAfterSelect = document.querySelector('div[data-testid="beast-core-modal-innerWrapper"]')
+    if (modalWrapperAfterSelect) {
+      console.log('[Content] 【主动流程】检测到弹窗，查找确认按钮...')
+      const confirmButton = modalWrapperAfterSelect.querySelector('button[data-testid="beast-core-button"]') as HTMLElement
+      if (confirmButton) {
+        const buttonText = confirmButton.textContent?.trim() || ''
+        console.log(`[Content] 【主动流程】找到弹窗按钮: ${buttonText}`)
+        confirmButton.click()
+        console.log('[Content] 【主动流程】已点击弹窗确认按钮')
+        await sleep(1000) // 等待弹窗关闭
+      }
+    } else {
+      console.log('[Content] 【主动流程】未检测到弹窗，继续执行')
+    }
+    
+    // 步骤3：查找并点击批量打印按钮
+    console.log('[Content] 【主动流程】步骤3：查找并点击批量打印按钮')
+    const buttons = document.querySelectorAll('button[data-testid="beast-core-button"]')
+    let batchPrintButton: HTMLElement | null = null
+    
+    // 遍历所有按钮，查找文本内容为"批量打印商品打包标签"的按钮
+    for (const button of Array.from(buttons)) {
+      const buttonText = button.textContent?.trim() || ''
+      if (buttonText === '批量打印商品打包标签') {
+        batchPrintButton = button as HTMLElement
+        console.log('[Content] 【主动流程】找到批量打印商品打包标签按钮')
+        break
+      }
+    }
+    
+    if (!batchPrintButton) {
+      console.error('[Content] 【主动流程】未找到批量打印商品打包标签按钮')
+      return false
+    }
+    
+    // 步骤4：点击批量打印按钮
+    console.log('[Content] 【主动流程】步骤4：点击批量打印按钮')
+    batchPrintButton.click()
+    console.log('[Content] 【主动流程】已点击批量打印商品打包标签按钮')
+    
+    // 步骤5：等待打印弹窗出现，并点击弹窗中的按钮
+    console.log('[Content] 【主动流程】步骤5：等待打印弹窗出现并点击按钮')
+    await sleep(1000) // 等待弹窗出现
+    const printModalWrapper = await findDom('div[data-testid="beast-core-modal-innerWrapper"]', {
+      timeout: 5000,
+      interval: 200
+    })
+    
+    if (printModalWrapper) {
+      console.log('[Content] 【主动流程】打印弹窗已出现，查找弹窗中的按钮')
+      // 查找弹窗中的"继续打印"或其他按钮
+      const printModalButtons = printModalWrapper.querySelectorAll('button[data-testid="beast-core-button"]')
+      let continuePrintButton: HTMLElement | null = null
+      
+      for (const button of Array.from(printModalButtons)) {
+        const buttonText = button.textContent?.trim() || ''
+        console.log(`[Content] 【主动流程】检查弹窗按钮: ${buttonText}`)
+        // 查找"继续打印"或类似的按钮
+        if (buttonText.includes('继续') || buttonText.includes('打印') || buttonText.includes('确认')) {
+          continuePrintButton = button as HTMLElement
+          console.log(`[Content] 【主动流程】找到弹窗按钮: ${buttonText}`)
+          break
+        }
+      }
+      
+      if (continuePrintButton) {
+        console.log('[Content] 【主动流程】点击弹窗中的按钮...')
+        continuePrintButton.click()
+        console.log('[Content] 【主动流程】已点击弹窗中的按钮')
+      } else {
+        console.warn('[Content] 【主动流程】未找到弹窗中的按钮，继续执行')
+      }
+    } else {
+      console.warn('[Content] 【主动流程】未检测到打印弹窗，继续执行')
+    }
+    
+    console.log('[Content] ========== 【主动流程】所有点击操作已完成 ==========')
+    
+    // ========== 第二部分：被动监听流程 - 等待接口拦截器发送事件 ==========
+    console.log('[Content] ========== 【被动监听】开始设置接口拦截监听器 ==========')
+    
+    // 确保接口拦截器已设置（全局拦截器应该在页面加载时就已经设置）
+    if (!(window as any).__printAPIListenerSetup) {
+      console.warn('[Content] 【被动监听】警告：全局拦截器未设置，立即设置...')
+      await interceptPrintAPI()
+      await sleep(500) // 等待注入完成
+    } else {
+      console.log('[Content] 【被动监听】全局接口拦截器已就绪')
+    }
+    
+    // 创建Promise来等待批量打印接口数据
+    let printDataResolve: ((data: any) => void) | null = null
+    let printDataReject: ((error: Error) => void) | null = null
+    const printDataPromise = new Promise<any>((resolve, reject) => {
+      printDataResolve = resolve
+      printDataReject = reject
+    })
+    
+    // 设置临时标记，用于识别本次批量打印接口
+    const tempMarkerId = `batch_print_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+    ;(window as any).__waitingForBatchPrintData = tempMarkerId
+    
+    // 设置postMessage监听器，被动接收来自注入脚本的打印接口数据
+    const messageHandler = async (event: MessageEvent) => {
+      // 验证消息来源，确保来自注入脚本
+      if (event.data && event.data.type === 'PRINT_API_RESPONSE' && event.data.source === 'injected-script') {
+        const printData = event.data.data
+        const url = printData.url || ''
+        
+        // 检查是否是批量打印接口（printBoxMarks）
+        if (url.includes('printBoxMarks')) {
+          console.log(`[Content] 【被动监听】✅ 检测到批量打印标签接口调用: ${url}`)
+          
+          // 检查是否正在等待批量打印数据（通过标记ID匹配）
+          if ((window as any).__waitingForBatchPrintData === tempMarkerId) {
+            // 移除监听器
+            window.removeEventListener('message', messageHandler)
+            
+            // 清除等待标记
+            ;(window as any).__waitingForBatchPrintData = null
+            
+            try {
+              // ========== 打印拦截到的完整接口数据 ==========
+              console.log('========================================')
+              console.log('[Content] 【被动监听】🎯 ========== 拦截到打印接口数据 ==========')
+              console.log('========================================')
+              
+              // 打印原始数据对象
+              console.log('[Content] 【被动监听】📋 原始 printData 对象:', printData)
+              console.log('[Content] 【被动监听】📋 接口URL:', url)
+              console.log('[Content] 【被动监听】📋 时间戳:', printData.timestamp)
+              
+              let data = printData.data
+              
+              // 打印原始数据类型
+              console.log('[Content] 【被动监听】📋 原始数据类型:', typeof data)
+              console.log('[Content] 【被动监听】📋 原始数据长度:', typeof data === 'string' ? data.length : 'N/A')
+              
+              // 如果数据是字符串，尝试解析JSON
+              if (typeof data === 'string') {
+                console.log('[Content] 【被动监听】📋 原始字符串数据（完整）:')
+                console.log(data)
+                
+                try {
+                  data = JSON.parse(data)
+                  console.log('[Content] 【被动监听】📋 解析后的JSON数据:')
+                  console.log(JSON.stringify(data, null, 2))
+                  console.log('[Content] 【被动监听】📋 JSON数据类型:', typeof data)
+                  console.log('[Content] 【被动监听】📋 JSON数据键名:', data && typeof data === 'object' ? Object.keys(data) : 'N/A')
+                } catch (parseError) {
+                  console.log('[Content] 【被动监听】📋 数据不是有效的JSON格式')
+                  console.log('[Content] 【被动监听】📋 解析错误:', parseError)
+                }
+              } else {
+                console.log('[Content] 【被动监听】📋 数据（非字符串）:')
+                console.log(data)
+                console.log('[Content] 【被动监听】📋 数据类型:', typeof data)
+                if (data && typeof data === 'object') {
+                  console.log('[Content] 【被动监听】📋 数据键名:', Object.keys(data))
+                  console.log('[Content] 【被动监听】📋 数据字符串化:')
+                  console.log(JSON.stringify(data, null, 2))
+                }
+              }
+              
+              console.log('========================================')
+              console.log('[Content] 【被动监听】✅ ========== 数据打印完成 ==========')
+              console.log('========================================')
+              
+              // 保存数据到background
+              try {
+                console.log('[Content] 【被动监听】📦 保存打印数据到background...')
+                await chrome.runtime.sendMessage({
+                  type: 'SAVE_BATCH_PRINT_DATA',
+                  data: {
+                    printData: data,
+                    timestamp: Date.now()
+                  }
+                })
+                console.log('[Content] 【被动监听】✅ 打印数据已保存到background')
+              } catch (error: any) {
+                console.error('[Content] 【被动监听】❌ 保存打印数据到background失败:', error)
+              }
+              
+              // ========== 开始渲染并生成PDF ==========
+              console.log('[Content] 【被动监听】🎨 ========== 开始渲染打印标签并生成PDF ==========')
+              
+              try {
+                // 解析打印数据
+                let printDataToRender = data
+                
+                // 如果数据有result字段且是数组，遍历每个标签数据并生成PDF
+                if (printDataToRender && printDataToRender.result && Array.isArray(printDataToRender.result)) {
+                  console.log(`[Content] 【被动监听】📋 找到 ${printDataToRender.result.length} 个打印标签数据`)
+                  
+                  // 遍历每个标签数据，生成PDF
+                  for (let i = 0; i < printDataToRender.result.length; i++) {
+                    const labelData = printDataToRender.result[i]
+                    
+                    // 提取备货单号作为文件名
+                    const stockOrderNo = labelData.subPurchaseOrderSn || labelData.deliveryOrderSn || `打印标签_${Date.now()}_${i}`
+                    const fileName = `${stockOrderNo}`
+                    
+                    console.log(`[Content] 【被动监听】🎨 开始渲染第 ${i + 1}/${printDataToRender.result.length} 个标签: ${fileName}`)
+                    
+                    // 渲染打印标签HTML（只渲染单个标签数据）
+                    const printLabelHTML = renderPrintLabel({ result: [labelData] })
+                    
+                    // 创建隐藏的iframe来渲染打印标签（100x100mm）
+                    const iframe = document.createElement('iframe')
+                    iframe.style.position = 'fixed'
+                    iframe.style.top = '-9999px'
+                    iframe.style.left = '-9999px'
+                    iframe.style.width = '100mm'
+                    iframe.style.height = '100mm'
+                    iframe.style.border = 'none'
+                    document.body.appendChild(iframe)
+                    
+                    // 等待iframe加载
+                    await new Promise<void>((resolve) => {
+                      iframe.onload = () => resolve()
+                      iframe.contentDocument!.open()
+                      iframe.contentDocument!.write(printLabelHTML)
+                      iframe.contentDocument!.close()
+                    })
+                    
+                    // 等待内容渲染和二维码、条形码生成
+                    await sleep(2000)
+                    
+                    // 等待二维码和条形码生成完成
+                    const iframeWindow = iframe.contentWindow
+                    if (iframeWindow) {
+                      // 创建Promise等待二维码和条形码生成事件
+                      const waitForQRCode = new Promise<void>((resolve) => {
+                        iframeWindow.addEventListener('qrCodeGenerated', () => {
+                          console.log('[Content] 【被动监听】✅ 二维码已生成')
+                          resolve()
+                        }, { once: true })
+                        // 超时检查
+                        setTimeout(() => {
+                          const qrCodeElement = iframe.contentDocument?.getElementById('qrCode')
+                          if (qrCodeElement && qrCodeElement.querySelector('canvas')) {
+                            console.log('[Content] 【被动监听】✅ 二维码已生成（通过检查）')
+                            resolve()
+                          } else {
+                            console.warn('[Content] 【被动监听】⚠️ 二维码生成超时，继续执行')
+                            resolve()
+                          }
+                        }, 5000)
+                      })
+                      
+                      const waitForBarcode = new Promise<void>((resolve) => {
+                        iframeWindow.addEventListener('barcodeGenerated', () => {
+                          console.log('[Content] 【被动监听】✅ 条形码已生成')
+                          resolve()
+                        }, { once: true })
+                        // 超时检查
+                        setTimeout(() => {
+                          const barcodeElement = iframe.contentDocument?.getElementById('barcode')
+                          if (barcodeElement && barcodeElement.querySelector('svg')) {
+                            console.log('[Content] 【被动监听】✅ 条形码已生成（通过检查）')
+                            resolve()
+                          } else {
+                            console.warn('[Content] 【被动监听】⚠️ 条形码生成超时，继续执行')
+                            resolve()
+                          }
+                        }, 5000)
+                      })
+                      
+                      // 等待二维码和条形码都生成完成
+                      await Promise.all([waitForQRCode, waitForBarcode])
+                      
+                      // 额外等待500ms确保渲染完成
+                      await sleep(500)
+                    } else {
+                      // 如果无法访问iframe window，使用传统方式等待
+                      await sleep(3000)
+                      console.warn('[Content] 【被动监听】⚠️ 无法访问iframe window，使用传统等待方式')
+                    }
+                    
+                    // 从iframe中生成PDF
+                    const iframeBody = iframe.contentDocument?.body
+                    if (iframeBody) {
+                      const pdfFileName = `${fileName}.pdf`
+                      await generatePDF(iframeBody, pdfFileName)
+                      console.log(`[Content] 【被动监听】✅ PDF 已生成并下载: ${pdfFileName}`)
+                    } else {
+                      console.error(`[Content] 【被动监听】❌ 无法获取iframe body`)
+                    }
+                    
+                    // 移除iframe
+                    document.body.removeChild(iframe)
+                    
+                    // 等待一段时间再处理下一个（避免浏览器下载冲突）
+                    if (i < printDataToRender.result.length - 1) {
+                      await sleep(1000)
+                    }
+                  }
+                  
+                  console.log('[Content] 【被动监听】✅ ========== 所有PDF生成完成 ==========')
+                } else if (printDataToRender && Array.isArray(printDataToRender)) {
+                  // 如果数据本身就是数组
+                  console.log(`[Content] 【被动监听】📋 数据是数组，找到 ${printDataToRender.length} 个打印标签数据`)
+                  
+                  for (let i = 0; i < printDataToRender.length; i++) {
+                    const labelData = printDataToRender[i]
+                    const stockOrderNo = labelData.subPurchaseOrderSn || labelData.deliveryOrderSn || `打印标签_${Date.now()}_${i}`
+                    const fileName = `${stockOrderNo}`
+                    
+                    console.log(`[Content] 【被动监听】🎨 开始渲染第 ${i + 1}/${printDataToRender.length} 个标签: ${fileName}`)
+                    
+                    const printLabelHTML = renderPrintLabel({ result: [labelData] })
+                    
+                    const iframe = document.createElement('iframe')
+                    iframe.style.position = 'fixed'
+                    iframe.style.top = '-9999px'
+                    iframe.style.left = '-9999px'
+                    iframe.style.width = '100mm'
+                    iframe.style.height = '100mm'
+                    iframe.style.border = 'none'
+                    document.body.appendChild(iframe)
+                    
+                    await new Promise<void>((resolve) => {
+                      iframe.onload = () => resolve()
+                      iframe.contentDocument!.open()
+                      iframe.contentDocument!.write(printLabelHTML)
+                      iframe.contentDocument!.close()
+                    })
+                    
+                    // 等待内容渲染和二维码、条形码生成
+                    await sleep(2000)
+                    
+                    // 等待二维码和条形码生成完成
+                    const iframeWindow = iframe.contentWindow
+                    if (iframeWindow) {
+                      const waitForQRCode = new Promise<void>((resolve) => {
+                        iframeWindow.addEventListener('qrCodeGenerated', () => resolve(), { once: true })
+                        setTimeout(() => {
+                          const qrCodeElement = iframe.contentDocument?.getElementById('qrCode')
+                          if (qrCodeElement && qrCodeElement.querySelector('canvas')) {
+                            resolve()
+                          } else {
+                            resolve()
+                          }
+                        }, 5000)
+                      })
+                      
+                      const waitForBarcode = new Promise<void>((resolve) => {
+                        iframeWindow.addEventListener('barcodeGenerated', () => resolve(), { once: true })
+                        setTimeout(() => {
+                          const barcodeElement = iframe.contentDocument?.getElementById('barcode')
+                          if (barcodeElement && barcodeElement.querySelector('svg')) {
+                            resolve()
+                          } else {
+                            resolve()
+                          }
+                        }, 5000)
+                      })
+                      
+                      await Promise.all([waitForQRCode, waitForBarcode])
+                      await sleep(500)
+                    } else {
+                      await sleep(3000)
+                    }
+                    
+                    const iframeBody = iframe.contentDocument?.body
+                    if (iframeBody) {
+                      const pdfFileName = `${fileName}.pdf`
+                      await generatePDF(iframeBody, pdfFileName)
+                      console.log(`[Content] 【被动监听】✅ PDF 已生成并下载: ${pdfFileName}`)
+                    }
+                    
+                    document.body.removeChild(iframe)
+                    
+                    if (i < printDataToRender.length - 1) {
+                      await sleep(1000)
+                    }
+                  }
+                  
+                  console.log('[Content] 【被动监听】✅ ========== 所有PDF生成完成 ==========')
+                } else {
+                  // 单个标签数据
+                  console.log('[Content] 【被动监听】📋 处理单个打印标签数据')
+                  
+                  const stockOrderNo = printDataToRender?.subPurchaseOrderSn || printDataToRender?.deliveryOrderSn || `打印标签_${Date.now()}`
+                  const fileName = `${stockOrderNo}`
+                  
+                  const printLabelHTML = renderPrintLabel(printDataToRender)
+                  
+                  const iframe = document.createElement('iframe')
+                  iframe.style.position = 'fixed'
+                  iframe.style.top = '-9999px'
+                  iframe.style.left = '-9999px'
+                  iframe.style.width = '100mm'
+                  iframe.style.height = '100mm'
+                  iframe.style.border = 'none'
+                  document.body.appendChild(iframe)
+                  
+                  await new Promise<void>((resolve) => {
+                    iframe.onload = () => resolve()
+                    iframe.contentDocument!.open()
+                    iframe.contentDocument!.write(printLabelHTML)
+                    iframe.contentDocument!.close()
+                  })
+                  
+                  // 等待内容渲染和二维码生成
+                  await sleep(3000)
+                  
+                  // 检查二维码是否已生成
+                  const qrCodeElement = iframe.contentDocument?.getElementById('qrCode')
+                  if (qrCodeElement) {
+                    let retryCount = 0
+                    while (retryCount < 10 && !qrCodeElement.querySelector('canvas')) {
+                      await sleep(500)
+                      retryCount++
+                    }
+                  }
+                  
+                  const iframeBody = iframe.contentDocument?.body
+                  if (iframeBody) {
+                    const pdfFileName = `${fileName}.pdf`
+                    await generatePDF(iframeBody, pdfFileName)
+                    console.log(`[Content] 【被动监听】✅ PDF 已生成并下载: ${pdfFileName}`)
+                  }
+                  
+                  document.body.removeChild(iframe)
+                  console.log('[Content] 【被动监听】✅ ========== PDF生成完成 ==========')
+                }
+              } catch (renderError: any) {
+                console.error('[Content] 【被动监听】❌ 渲染并生成PDF时发生错误:', renderError)
+                console.error('[Content] 【被动监听】❌ 错误详情:', renderError.message)
+                console.error('[Content] 【被动监听】❌ 错误堆栈:', renderError.stack)
+              }
+              
+              // 解析数据并resolve Promise
+              if (printDataResolve) {
+                printDataResolve(data)
+              }
+              
+              console.log('[Content] 【被动监听】✅ 所有操作已完成，不会刷新页面')
+              
+            } catch (error: any) {
+              console.error(`[Content] 【被动监听】❌ 处理批量打印接口数据失败:`, error)
+              console.error(`[Content] 【被动监听】❌ 错误详情:`, error.message)
+              console.error(`[Content] 【被动监听】❌ 错误堆栈:`, error.stack)
+              if (printDataReject) {
+                printDataReject(error)
+              }
+            }
+          }
+        }
+      }
+    }
+    
+    // 添加postMessage监听器（被动监听）
+    window.addEventListener('message', messageHandler)
+    console.log('[Content] 【被动监听】postMessage监听器已设置，等待接口拦截器发送事件...')
+    
+    // 设置超时（15秒后清理）
+    const timeoutId = setTimeout(() => {
+      if ((window as any).__waitingForBatchPrintData === tempMarkerId) {
+        ;(window as any).__waitingForBatchPrintData = null
+        window.removeEventListener('message', messageHandler)
+        if (printDataReject) {
+          printDataReject(new Error('等待批量打印接口数据超时'))
+        }
+      }
+    }, 15000)
+    
+    // 等待接口拦截器被动发送的数据（最多15秒）
+    console.log('[Content] 【被动监听】等待接口拦截器发送打印接口数据...')
+    console.log('[Content] 【被动监听】📋 接收到数据后将自动渲染并生成PDF下载，不会刷新页面')
+    
+    try {
+      // 注意：由于在 messageHandler 中不 resolve Promise，这里会一直等待
+      // 数据会在 messageHandler 中打印，然后暂停
+      const printData = await Promise.race([
+        printDataPromise,
+        new Promise((_, reject) => setTimeout(() => reject(new Error('超时')), 15000))
+      ]) as any
+      
+      // 清理超时定时器和监听器
+      clearTimeout(timeoutId)
+      window.removeEventListener('message', messageHandler)
+      
+      console.log('[Content] 【被动监听】✅ 成功接收到批量打印接口数据')
+      
+      // ========== PDF已生成，不刷新页面 ==========
+      console.log('[Content] 【被动监听】✅ PDF文件已生成并下载完成')
+      console.log('[Content] 【被动监听】📋 所有打印标签已处理完成，不会刷新页面')
+      
+      // 不刷新页面，保持当前页面状态
+      // PDF文件已在 messageHandler 中生成并下载
+      
+      return true
+    } catch (error: any) {
+      // 清理超时定时器和监听器
+      clearTimeout(timeoutId)
+      window.removeEventListener('message', messageHandler)
+      ;(window as any).__waitingForBatchPrintData = null
+      
+      console.error('[Content] 【被动监听】❌ 获取批量打印接口数据失败:', error)
+      console.error('[Content] 【被动监听】❌ 错误详情:', error.message)
+      return false
+    }
+  } catch (error: any) {
+    console.error('[Content] 点击待仓库收货标签时发生错误:', error)
+    return false
+  }
+}
+
+/**
+    
+    if (tableRows.length === 0) {
+      console.warn('[Content] 未找到表格行数据')
+      return false
+    }
+    
+    // 只处理第一行，不循环
+    if (tableRows.length === 0) {
+      console.warn('[Content] 未找到表格行数据')
+      return false
+    }
+    
+    const row = tableRows[0] as HTMLElement
+    console.log(`[Content] 处理第 1 行（仅执行第一行）...`)
+    
+    // 在当前行中查找所有"打印商品打包标签"链接
+    const printLinks = row.querySelectorAll('a[data-testid="beast-core-button-link"]')
+    let firstPrintLink: HTMLElement | null = null
+    
+    // 遍历所有链接，找到第一个文本内容为"打印商品打包标签"的链接
+    for (const link of Array.from(printLinks)) {
+      const linkText = link.textContent?.trim() || ''
+      if (linkText === '打印商品打包标签') {
+        firstPrintLink = link as HTMLElement
+        console.log(`[Content] 第 1 行找到第一个"打印商品打包标签"链接`)
+        break
+      }
+    }
+    
+    if (!firstPrintLink) {
+      console.warn(`[Content] 第 1 行未找到"打印商品打包标签"链接`)
+      return false
+    }
+    
+    // 点击第一个"打印商品打包标签"链接
+    console.log(`[Content] 点击第 1 行的第一个"打印商品打包标签"...`)
+    firstPrintLink.click()
+    
+    // 等待弹窗出现
+    console.log(`[Content] 等待弹窗出现...`)
+    const modalWrapper = await findDom('div[data-testid="beast-core-modal-innerWrapper"]', {
+      timeout: 5000,
+      interval: 200
+    })
+    
+    if (modalWrapper) {
+      console.log(`[Content] 第 1 行点击后弹窗已出现`)
+      
+      // 从当前行提取备货单号
+      const stockOrderNo = extractStockOrderNoFromRow(row)
+      console.log(`[Content] 第 1 行备货单号: ${stockOrderNo || '未找到'}`)
+      
+      // 在弹窗中查找"继续打印"按钮
+      const continuePrintButton = await findButtonByText(
+        'button[data-testid="beast-core-button"]',
+        '继续打印',
+        {
+          timeout: 5000,
+          interval: 200,
+          parent: modalWrapper as Element
+        }
+      )
+      
+      if (continuePrintButton) {
+        console.log(`[Content] 找到"继续打印"按钮，准备点击...`)
+        
+        // 使用备货单号作为文件名（如果没有备货单号，使用时间戳）
+        const fileName = stockOrderNo || `打印标签_${Date.now()}`
+        
+        // 创建一个Promise来等待打印接口数据
+        let printDataResolve: ((data: any) => void) | null = null
+        let printDataReject: ((error: Error) => void) | null = null
+        const printDataPromise = new Promise<any>((resolve, reject) => {
+          printDataResolve = resolve
+          printDataReject = reject
+        })
+        
+        // 设置一个临时的接口拦截器，专门捕获这次打印的数据
+        const tempMarkerId = `print_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+        ;(window as any).__waitingForPrintData = tempMarkerId
+        
+        // 保存原始的fetch函数（如果还没有保存）
+        if (!(window as any).__originalFetchForPrint) {
+          ;(window as any).__originalFetchForPrint = window.fetch
+        }
+        const originalFetch = (window as any).__originalFetchForPrint
+        
+        // 创建临时拦截器
+        const tempFetchInterceptor = async function(...args: any[]) {
+          const url = typeof args[0] === 'string' ? args[0] : args[0].url
+          const urlStr = String(url)
+          
+          // 调用原始fetch
+          const response = await originalFetch.apply(this, args)
+          
+          // 检查是否是打印标签接口：printBoxMarks（优先匹配）
+          const isPrintBoxMarksAPI = urlStr.includes('printBoxMarks')
+          
+          // 如果正在等待打印数据，且是打印标签接口
+          if ((window as any).__waitingForPrintData === tempMarkerId && isPrintBoxMarksAPI) {
+            console.log(`[Content] ✅ 检测到打印标签接口调用: ${urlStr}`)
+            
+            // 克隆响应以便读取
+            const clonedResponse = response.clone()
+            
+            // 异步处理响应数据
+            clonedResponse.text().then(async (text) => {
+              try {
+                let data: any
+                try {
+                  data = JSON.parse(text)
+                  console.log(`[Content] 📦 打印接口返回的JSON数据:`, JSON.stringify(data, null, 2))
+                } catch {
+                  // 如果不是JSON，可能是HTML或其他格式
+                  data = text
+                  console.log(`[Content] 📦 打印接口返回的文本数据（前1000字符）:`, text.substring(0, 1000))
+                }
+                
+                console.log(`[Content] 📦 获取到打印接口数据，数据类型:`, typeof data)
+                console.log(`[Content] 📦 数据键名:`, data && typeof data === 'object' ? Object.keys(data) : 'N/A')
+                
+                // 清除等待标记
+                ;(window as any).__waitingForPrintData = null
+                
+                // 恢复原始fetch
+                window.fetch = originalFetch
+                
+                // 解析数据
+                if (printDataResolve) {
+                  printDataResolve(data)
+                }
+              } catch (error: any) {
+                console.error(`[Content] ❌ 处理打印接口数据失败:`, error)
+                // 清除等待标记
+                ;(window as any).__waitingForPrintData = null
+                // 恢复原始fetch
+                window.fetch = originalFetch
+                if (printDataReject) {
+                  printDataReject(error)
+                }
+              }
+            }).catch((error) => {
+              console.error(`[Content] ❌ 读取打印接口响应失败:`, error)
+              // 清除等待标记
+              ;(window as any).__waitingForPrintData = null
+              // 恢复原始fetch
+              window.fetch = originalFetch
+              if (printDataReject) {
+                printDataReject(error)
+              }
+            })
+          }
+          
+          return response
+        }
+        
+        // 设置临时拦截器
+        window.fetch = tempFetchInterceptor as typeof window.fetch
+        
+        // 设置超时（10秒后恢复）
+        setTimeout(() => {
+          if ((window as any).__waitingForPrintData === tempMarkerId) {
+            ;(window as any).__waitingForPrintData = null
+            window.fetch = originalFetch
+            if (printDataReject) {
+              printDataReject(new Error('等待打印接口数据超时'))
+            }
+          }
+        }, 10000)
+        
+        // 创建一个Promise来等待打印内容生成（保留作为备用）
+        let printContentResolve: ((content: HTMLElement) => void) | null = null
+        let printContentReject: ((error: Error) => void) | null = null
+        const printContentPromise = new Promise<HTMLElement>((resolve, reject) => {
+          printContentResolve = resolve
+          printContentReject = reject
+        })
+        
+        // 设置打印事件监听器，在打印预览打开时捕获内容
+        // 注意：beforeprint事件触发时，页面已经应用了打印样式，此时可以捕获打印内容
+        const printHandler = async () => {
+          console.log(`[Content] 检测到打印事件（beforeprint），准备捕获打印内容...`)
+          
+          // beforeprint事件触发时，页面已经应用了打印样式
+          // 等待一小段时间确保样式完全应用
+          await sleep(500)
+          
+          try {
+            // 查找打印内容区域
+            let printContent: HTMLElement | null = null
+            
+            // 方法1：查找包含打印标签内容的元素
+            // 打印标签通常包含：仓库名称、JIT、加急、SKC、SKU等信息
+            const allDivs = document.querySelectorAll('div')
+            let bestMatch: { element: HTMLElement; score: number } | null = null
+            
+            for (const div of Array.from(allDivs)) {
+              const text = div.textContent || ''
+              const rect = div.getBoundingClientRect()
+              
+              // 计算匹配分数
+              let score = 0
+              if (text.includes('义乌宝湾') || text.includes('莆田') || text.includes('东莞')) score += 3
+              if (text.includes('JIT')) score += 2
+              if (text.includes('加急')) score += 2
+              if (text.includes('SKC')) score += 2
+              if (text.includes('SKU') || text.includes('货号')) score += 2
+              if (text.includes('PC') && /PC\d+/.test(text)) score += 2 // 包裹号
+              if (rect.width > 400 && rect.height > 300) score += 2 // 尺寸合适
+              if (rect.width > 600 && rect.height > 400) score += 3 // 尺寸很大
+              
+              // 如果分数足够高，且尺寸合适，记录这个元素
+              if (score >= 5 && rect.width > 200 && rect.height > 200) {
+                if (!bestMatch || score > bestMatch.score) {
+                  bestMatch = { element: div as HTMLElement, score }
+                }
+              }
+            }
+            
+            if (bestMatch) {
+              printContent = bestMatch.element
+              console.log(`[Content] 找到打印内容区域（方法1，匹配分数: ${bestMatch.score}）`)
+            }
+            
+            // 方法2：如果没找到，查找包含打印样式的元素
+            // 打印时，通常会有一个主要的打印容器
+            if (!printContent) {
+              // 查找可能包含打印内容的容器
+              const possibleContainers = [
+                document.querySelector('[class*="print"]'),
+                document.querySelector('[id*="print"]'),
+                document.querySelector('[class*="label"]'),
+                document.querySelector('[id*="label"]')
+              ]
+              
+              for (const container of possibleContainers) {
+                if (container) {
+                  const rect = (container as HTMLElement).getBoundingClientRect()
+                  if (rect.width > 300 && rect.height > 300) {
+                    printContent = container as HTMLElement
+                    console.log(`[Content] 找到打印内容区域（方法2）`)
+                    break
+                  }
+                }
+              }
+            }
+            
+            // 方法3：查找body中最大的可见元素
+            if (!printContent) {
+              const bodyChildren = Array.from(document.body.children) as HTMLElement[]
+              let maxArea = 0
+              for (const child of bodyChildren) {
+                const rect = child.getBoundingClientRect()
+                const area = rect.width * rect.height
+                // 打印标签通常是横向的，宽度大于高度
+                if (area > maxArea && rect.width > 400 && rect.height > 200) {
+                  maxArea = area
+                  printContent = child
+                }
+              }
+              if (printContent) {
+                console.log(`[Content] 找到打印内容区域（方法3）`)
+              }
+            }
+            
+            // 方法4：如果还是没找到，使用整个body
+            if (!printContent) {
+              printContent = document.body
+              console.log(`[Content] 使用整个body作为打印内容`)
+            }
+            
+            if (printContent && printContentResolve) {
+              printContentResolve(printContent)
+            } else {
+              throw new Error('未找到打印内容区域')
+            }
+          } catch (error: any) {
+            console.error(`[Content] 捕获打印内容时发生错误:`, error)
+            if (printContentReject) {
+              printContentReject(error)
+            }
+          }
+        }
+        
+        // 监听打印事件（只监听一次）
+        window.addEventListener('beforeprint', printHandler, { once: true })
+        
+        // 同时尝试监听blob URL（作为备用方案）
+        const blobURLPromise = waitForBlobURL('seller.kuajingmaihuo.com', 3000).catch(() => {
+          console.log(`[Content] blob URL监听超时，将使用打印事件方式`)
+          return null
+        })
+        
+        // 点击"继续打印"按钮
+        continuePrintButton.click()
+        console.log(`[Content] 已点击"继续打印"按钮`)
+        
+        // 等待打印接口调用并获取数据
+        try {
+          console.log(`[Content] 等待打印接口调用...`)
+          const printData = await Promise.race([
+            printDataPromise,
+            new Promise<any>((_, reject) => 
+              setTimeout(() => reject(new Error('等待打印接口数据超时')), 10000)
+            )
+          ])
+          
+          console.log(`[Content] 获取到打印接口数据，开始渲染...`)
+          
+          // 渲染打印标签HTML
+          const printLabelHTML = renderPrintLabel(printData)
+          console.log(`[Content] 打印标签HTML已生成`)
+          
+          // 创建隐藏的iframe来渲染打印标签
+          const iframe = document.createElement('iframe')
+          iframe.style.position = 'fixed'
+          iframe.style.top = '-9999px'
+          iframe.style.left = '-9999px'
+          iframe.style.width = '210mm'
+          iframe.style.height = '297mm'
+          iframe.style.border = 'none'
+          document.body.appendChild(iframe)
+          
+          // 等待iframe加载
+          await new Promise<void>((resolve) => {
+            iframe.onload = () => resolve()
+            iframe.contentDocument!.open()
+            iframe.contentDocument!.write(printLabelHTML)
+            iframe.contentDocument!.close()
+          })
+          
+          // 等待内容渲染
+          await sleep(2000)
+          
+          // 从iframe中生成PDF
+          const iframeBody = iframe.contentDocument?.body
+          if (iframeBody) {
+            const pdfFileName = `${fileName}.pdf`
+            await generatePDF(iframeBody, pdfFileName)
+            console.log(`[Content] PDF 已生成: ${pdfFileName}`)
+          } else {
+            throw new Error('无法获取iframe body')
+          }
+          
+          // 移除iframe
+          document.body.removeChild(iframe)
+          
+        } catch (error: any) {
+          console.error(`[Content] 处理打印接口数据时发生错误:`, error)
+          console.error(`[Content] 错误详情:`, error.message)
+          
+          // 恢复原始fetch
+          if ((window as any).__originalFetchForPrint) {
+            window.fetch = (window as any).__originalFetchForPrint
+          }
+          
+          // 如果接口拦截失败，尝试其他方法
+          console.log(`[Content] 接口拦截失败，尝试其他方法...`)
+          
+          // 尝试等待blob URL
+          try {
+            const blobURLPromise = waitForBlobURL('seller.kuajingmaihuo.com', 3000).catch(() => null)
+            const blobURL = await Promise.race([
+              blobURLPromise,
+              new Promise<null>((resolve) => setTimeout(() => resolve(null), 3000))
+            ])
+            
+            if (blobURL) {
+              console.log(`[Content] 检测到 blob URL: ${blobURL}`)
+              await handleBlobURLAndGeneratePDF(blobURL, fileName)
+            } else {
+              throw new Error('未检测到blob URL')
+            }
+          } catch (blobError: any) {
+            console.error(`[Content] blob URL方法也失败:`, blobError)
+            
+            // 最后的备用方案：尝试从页面捕获
+            try {
+              console.log(`[Content] 尝试从页面捕获打印内容...`)
+              const printContent = await Promise.race([
+                printContentPromise,
+                new Promise<HTMLElement>((_, reject) => 
+                  setTimeout(() => reject(new Error('等待打印内容超时')), 5000)
+                )
+              ])
+              
+              if (printContent) {
+                const pdfFileName = `${fileName}.pdf`
+                await generatePDF(printContent, pdfFileName)
+                console.log(`[Content] PDF 已生成（从页面）: ${pdfFileName}`)
+              }
+            } catch (pageError: any) {
+              console.error(`[Content] 所有方法都失败了:`, pageError)
+            }
+          }
+        }
+        
+        // 等待3秒，让操作完成
+        console.log(`[Content] 等待3秒，让操作完成...`)
+        await sleep(3000)
+        
+        // 等待弹窗关闭
+        console.log(`[Content] 等待弹窗关闭...`)
+        await sleep(1000)
+      } else {
+        console.warn(`[Content] 第 1 行未找到"继续打印"按钮`)
+        return false
+      }
+    } else {
+      console.warn(`[Content] 第 1 行点击后未检测到弹窗`)
+      return false
+    }
+    
+    console.log('[Content] ============== 批量点击打印商品打包标签完成 =============')
+    return true
+  } catch (error: any) {
+    console.error('[Content] 点击待仓库收货标签时发生错误:', error)
     return false
   }
 }
@@ -2656,6 +4542,39 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true // 保持消息通道开放以支持异步响应
   }
 
+  // 处理打印接口调用的通知
+  if (message.type === 'PRINT_API_CALLED') {
+    console.log('[Content] 收到打印接口调用通知:', message.data)
+    // 打印接口拦截器会自动处理
+    sendResponse({ success: true, message: '已收到打印接口调用通知' })
+    return true
+  }
+
+  // 处理点击待仓库收货标签的消息
+  if (message.type === 'CLICK_WAREHOUSE_RECEIPT_TAB') {
+    console.log('[Content] 收到CLICK_WAREHOUSE_RECEIPT_TAB消息')
+    
+    // 确保页面已加载完成后再执行
+    if (document.readyState === 'complete') {
+      // 页面已完全加载，直接执行
+      clickWarehouseReceiptTab()
+    } else {
+      // 等待页面完全加载
+      window.addEventListener('load', () => {
+        // 再次设置视口大小，确保生效
+        setViewportSize()
+        // 延迟一点时间，确保页面元素都已渲染
+        setTimeout(() => {
+          clickWarehouseReceiptTab()
+        }, 500)
+      })
+    }
+    
+    // 发送响应
+    sendResponse({ success: true, message: '已收到点击待仓库收货标签任务' })
+    return true // 保持消息通道开放以支持异步响应
+  }
+
   return false
 })
 
@@ -2684,3 +4603,134 @@ if (window.location.href.includes('seller.kuajingmaihuo.com')) {
     })
   }
 }
+
+/**
+ * 检查并渲染批量打印数据
+ * 页面加载时检查是否有保存的批量打印数据，如果有则自动渲染并生成PDF
+ */
+async function checkAndRenderBatchPrintData() {
+  try {
+    console.log('[Content] ========== 检查是否有保存的批量打印数据 ==========')
+    
+    // 从background获取保存的批量打印数据
+    const response = await chrome.runtime.sendMessage({
+      type: 'GET_BATCH_PRINT_DATA'
+    })
+    
+    if (!response || !response.success || !response.data) {
+      console.log('[Content] 未找到保存的批量打印数据')
+      return
+    }
+    
+    const batchPrintData = response.data
+    console.log('[Content] 找到保存的批量打印数据，时间戳:', batchPrintData.timestamp)
+    
+    // 等待页面完全加载
+    await sleep(3000)
+    
+    // 检查是否是shipping-list页面
+    const isShippingListPage = window.location.href.includes('/main/order-manager/shipping-list')
+    if (!isShippingListPage) {
+      console.log('[Content] 当前不是shipping-list页面，跳过渲染')
+      return
+    }
+    
+    // 解析打印数据
+    const printData = batchPrintData.printData
+    
+    // 如果数据有result字段且是数组，遍历每个标签数据并生成PDF
+    if (printData && printData.result && Array.isArray(printData.result)) {
+      console.log(`[Content] 找到 ${printData.result.length} 个打印标签数据`)
+      
+      // 遍历每个标签数据，生成PDF
+      for (let i = 0; i < printData.result.length; i++) {
+        const labelData = printData.result[i]
+        
+        // 提取备货单号作为文件名
+        const stockOrderNo = labelData.subPurchaseOrderSn || labelData.deliveryOrderSn || `打印标签_${Date.now()}_${i}`
+        const fileName = `${stockOrderNo}`
+        
+        console.log(`[Content] 开始渲染第 ${i + 1}/${printData.result.length} 个标签: ${fileName}`)
+        
+        // 渲染打印标签HTML（只渲染单个标签数据）
+        const printLabelHTML = renderPrintLabel({ result: [labelData] })
+        
+        // 创建隐藏的iframe来渲染打印标签
+        const iframe = document.createElement('iframe')
+        iframe.style.position = 'fixed'
+        iframe.style.top = '-9999px'
+        iframe.style.left = '-9999px'
+        iframe.style.width = '210mm'
+        iframe.style.height = '297mm'
+        iframe.style.border = 'none'
+        document.body.appendChild(iframe)
+        
+        // 等待iframe加载
+        await new Promise<void>((resolve) => {
+          iframe.onload = () => resolve()
+          iframe.contentDocument!.open()
+          iframe.contentDocument!.write(printLabelHTML)
+          iframe.contentDocument!.close()
+        })
+        
+        // 等待内容渲染
+        await sleep(2000)
+        
+        // 从iframe中生成PDF
+        const iframeBody = iframe.contentDocument?.body
+        if (iframeBody) {
+          const pdfFileName = `${fileName}.pdf`
+          await generatePDF(iframeBody, pdfFileName)
+          console.log(`[Content] PDF 已生成: ${pdfFileName}`)
+        } else {
+          console.error(`[Content] 无法获取iframe body`)
+        }
+        
+        // 移除iframe
+        document.body.removeChild(iframe)
+        
+        // 等待一段时间再处理下一个
+        await sleep(1000)
+      }
+      
+      // 清除保存的批量打印数据
+      await chrome.storage.local.remove('batchPrintData')
+      console.log('[Content] 批量打印数据已清除')
+      
+      console.log('[Content] ========== 批量打印PDF生成完成 ==========')
+    } else {
+      console.warn('[Content] 打印数据格式不正确')
+    }
+  } catch (error: any) {
+    console.error('[Content] 检查并渲染批量打印数据时发生错误:', error)
+  }
+}
+
+/**
+ * Content Script 初始化
+ * 在页面加载时自动注入打印接口拦截脚本
+ */
+(function initContentScript() {
+  console.log('[Content] Content Script 初始化...')
+  
+  // 设置视口大小
+  setViewportSize()
+  
+  // 在页面加载完成后注入打印接口拦截脚本
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+      console.log('[Content] DOM加载完成，开始注入打印接口拦截脚本...')
+      interceptPrintAPI().catch((error) => {
+        console.error('[Content] 初始化注入脚本失败:', error)
+      })
+    })
+  } else {
+    // 如果页面已经加载完成，立即注入
+    console.log('[Content] 页面已加载，立即注入打印接口拦截脚本...')
+    interceptPrintAPI().catch((error) => {
+      console.error('[Content] 初始化注入脚本失败:', error)
+    })
+  }
+  
+  console.log('[Content] Content Script 初始化完成')
+})()

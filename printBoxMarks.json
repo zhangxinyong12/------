@@ -1,0 +1,325 @@
+{
+  "success": true,
+  "errorCode": 1000000,
+  "errorMsg": null,
+  "result": [
+    {
+      "subPurchaseOrderSn": "WB2508022499689",
+      "isCustomProduct": false,
+      "productSkcId": 19519869676,
+      "productSkcName": null,
+      "packageSn": "PC2508022073890",
+      "packageSkcNum": 1,
+      "totalPackageNum": 1,
+      "packageIndex": 1,
+      "deliveryOrderSn": "FH2508021521250",
+      "deliverSkcNum": 1,
+      "supplierId": 634418224109659,
+      "supplierName": "Fk Style",
+      "deliverTime": 1769532006044,
+      "deliveryStatus": 1,
+      "subWarehouseId": 779320886293,
+      "subWarehouseName": "东莞一产13号子仓",
+      "subWarehouseEnglishName": "DongGuan YiChan-13",
+      "expressDeliverySn": "",
+      "expressCompany": "",
+      "expressEnglishCompany": null,
+      "purchaseStockType": 1,
+      "settlementType": 1,
+      "deliveryMethod": 1,
+      "driverName": "郑景榕",
+      "driverPhone": null,
+      "productName": "JIT, 2D Flat, 1pc, Wooden Decorative Sign, Dog with \"Welcome\" sign Wooden Wall Art Door Sign Plaque, Decor for Home Office Bar, Ready to Hang at Door or Wall, Vintage Welcome Sign, with Hanging Rope for Easy Display, Decorative Sign",
+      "skcExtCode": "GJ-000751",
+      "productSkuIdList": [
+        24637907844
+      ],
+      "nonClothSkuExtCode": "GJ-000751",
+      "isClothCat": false,
+      "urgencyType": 1,
+      "nonClothMainSpecVOList": [],
+      "nonClothSecondarySpecVOList": [
+        {
+          "parentSpecId": 45114199,
+          "parentSpecName": "型号",
+          "specId": 45121944,
+          "specName": "A"
+        }
+      ],
+      "isFirst": true,
+      "storageAttrName": "家居",
+      "volumeType": 10,
+      "purchaseTime": 1754094412922,
+      "greyKeyHitMap": {
+        "key_cn_BG_215946": true,
+        "key_BG_31572": false,
+        "key_cn_BG_226344": false
+      }
+    },
+    {
+      "subPurchaseOrderSn": "WB2601271963860",
+      "isCustomProduct": false,
+      "productSkcId": 55605618693,
+      "productSkcName": null,
+      "packageSn": "PC2601275743367",
+      "packageSkcNum": 2,
+      "totalPackageNum": 1,
+      "packageIndex": 1,
+      "deliveryOrderSn": "FH2601273824944",
+      "deliverSkcNum": 2,
+      "supplierId": 634418224109659,
+      "supplierName": "Fk Style",
+      "deliverTime": 1769532006048,
+      "deliveryStatus": 1,
+      "subWarehouseId": 317494526831,
+      "subWarehouseName": "义乌宝湾3号子仓（前置收货）",
+      "subWarehouseEnglishName": "YiWu BaoWan-3",
+      "expressDeliverySn": "",
+      "expressCompany": "",
+      "expressEnglishCompany": null,
+      "purchaseStockType": 1,
+      "settlementType": 1,
+      "deliveryMethod": 1,
+      "driverName": "郑景榕零贰捌",
+      "driverPhone": null,
+      "productName": "Jit，1Pc，椭圆形海报相框6.6x7.6in，鹿人手持酒杯的肖像画，复古乡村框架亚克力墙装饰，农舍墙壁艺术，理想的海报，印刷品和绘画，相框，增强客厅，卧室和办公室的家庭氛围",
+      "skcExtCode": "TY-030080",
+      "productSkuIdList": [
+        19910193386
+      ],
+      "nonClothSkuExtCode": "TY-030080",
+      "isClothCat": false,
+      "urgencyType": 1,
+      "nonClothMainSpecVOList": [],
+      "nonClothSecondarySpecVOList": [
+        {
+          "parentSpecId": 45114199,
+          "parentSpecName": "型号",
+          "specId": 45121944,
+          "specName": "A"
+        }
+      ],
+      "isFirst": false,
+      "storageAttrName": null,
+      "volumeType": 10,
+      "purchaseTime": 1769468167449,
+      "greyKeyHitMap": {
+        "key_cn_BG_215946": true,
+        "key_BG_31572": false,
+        "key_cn_BG_226344": false
+      }
+    },
+    {
+      "subPurchaseOrderSn": "WB2601272154663",
+      "isCustomProduct": false,
+      "productSkcId": 23885166905,
+      "productSkcName": null,
+      "packageSn": "PC2601275719251",
+      "packageSkcNum": 1,
+      "totalPackageNum": 1,
+      "packageIndex": 1,
+      "deliveryOrderSn": "FH2601273870146",
+      "deliverSkcNum": 1,
+      "supplierId": 634418224109659,
+      "supplierName": "Fk Style",
+      "deliverTime": 1769532006052,
+      "deliveryStatus": 1,
+      "subWarehouseId": 434940853403,
+      "subWarehouseName": "义乌宝湾1号子仓（前置收货）",
+      "subWarehouseEnglishName": "YiWu BaoWan-1",
+      "expressDeliverySn": "",
+      "expressCompany": "",
+      "expressEnglishCompany": null,
+      "purchaseStockType": 1,
+      "settlementType": 1,
+      "deliveryMethod": 1,
+      "driverName": "郑景榕零贰捌",
+      "driverPhone": null,
+      "productName": "Jit，1Pc，椭圆形海报相框6.6x7.6in，穿着西装的青蛙，复古乡村框架亚克力墙装饰，农舍墙壁艺术，理想的海报，印刷品和绘画，相框，增强客厅，卧室和办公室的家庭氛围",
+      "skcExtCode": "TY-018966",
+      "productSkuIdList": [
+        21859598763
+      ],
+      "nonClothSkuExtCode": "TY-018966",
+      "isClothCat": false,
+      "urgencyType": 1,
+      "nonClothMainSpecVOList": [],
+      "nonClothSecondarySpecVOList": [
+        {
+          "parentSpecId": 3001,
+          "parentSpecName": "尺码",
+          "specId": 170021178,
+          "specName": "15*20cm带框"
+        }
+      ],
+      "isFirst": false,
+      "storageAttrName": "家居",
+      "volumeType": 10,
+      "purchaseTime": 1769469036063,
+      "greyKeyHitMap": {
+        "key_cn_BG_215946": true,
+        "key_BG_31572": false,
+        "key_cn_BG_226344": false
+      }
+    },
+    {
+      "subPurchaseOrderSn": "WB2601275250827",
+      "isCustomProduct": false,
+      "productSkcId": 36885971596,
+      "productSkcName": null,
+      "packageSn": "PC2601275719252",
+      "packageSkcNum": 1,
+      "totalPackageNum": 1,
+      "packageIndex": 1,
+      "deliveryOrderSn": "FH2601273870149",
+      "deliverSkcNum": 1,
+      "supplierId": 634418224109659,
+      "supplierName": "Fk Style",
+      "deliverTime": 1769532006055,
+      "deliveryStatus": 1,
+      "subWarehouseId": 434940853403,
+      "subWarehouseName": "义乌宝湾1号子仓（前置收货）",
+      "subWarehouseEnglishName": "YiWu BaoWan-1",
+      "expressDeliverySn": "",
+      "expressCompany": "",
+      "expressEnglishCompany": null,
+      "purchaseStockType": 1,
+      "settlementType": 1,
+      "deliveryMethod": 1,
+      "driverName": "郑景榕零贰捌",
+      "driverPhone": null,
+      "productName": "Jit，1Pc，椭圆形海报相框6.6x7.6in，绿色青蛙，复古乡村框架亚克力墙装饰，农舍墙壁艺术，理想的海报，印刷品和绘画，相框，增强客厅，卧室和办公室的家庭氛围",
+      "skcExtCode": "TY-027946",
+      "productSkuIdList": [
+        66599790232
+      ],
+      "nonClothSkuExtCode": "TY-027946",
+      "isClothCat": false,
+      "urgencyType": 1,
+      "nonClothMainSpecVOList": [],
+      "nonClothSecondarySpecVOList": [
+        {
+          "parentSpecId": 3001,
+          "parentSpecName": "尺码",
+          "specId": 170021178,
+          "specName": "15*20cm带框"
+        }
+      ],
+      "isFirst": true,
+      "storageAttrName": "家居",
+      "volumeType": 10,
+      "purchaseTime": 1769495648086,
+      "greyKeyHitMap": {
+        "key_cn_BG_215946": true,
+        "key_BG_31572": false,
+        "key_cn_BG_226344": false
+      }
+    },
+    {
+      "subPurchaseOrderSn": "WB2601272485508",
+      "isCustomProduct": false,
+      "productSkcId": 57756884075,
+      "productSkcName": null,
+      "packageSn": "PC2601275719255",
+      "packageSkcNum": 1,
+      "totalPackageNum": 1,
+      "packageIndex": 1,
+      "deliveryOrderSn": "FH2601273870150",
+      "deliverSkcNum": 1,
+      "supplierId": 634418224109659,
+      "supplierName": "Fk Style",
+      "deliverTime": 1769532006059,
+      "deliveryStatus": 1,
+      "subWarehouseId": 434940853403,
+      "subWarehouseName": "义乌宝湾1号子仓（前置收货）",
+      "subWarehouseEnglishName": "YiWu BaoWan-1",
+      "expressDeliverySn": "",
+      "expressCompany": "",
+      "expressEnglishCompany": null,
+      "purchaseStockType": 1,
+      "settlementType": 1,
+      "deliveryMethod": 1,
+      "driverName": "郑景榕零贰捌",
+      "driverPhone": null,
+      "productName": "Jit，1Pc，椭圆形海报相框6.6x7.6in，夜读书中的刺猬，复古乡村框架亚克力墙装饰，农舍墙壁艺术，理想的海报，印刷品和绘画，相框，增强客厅，卧室和办公室的家庭氛围",
+      "skcExtCode": "TY-027939",
+      "productSkuIdList": [
+        13001409690
+      ],
+      "nonClothSkuExtCode": "TY-027939",
+      "isClothCat": false,
+      "urgencyType": 1,
+      "nonClothMainSpecVOList": [],
+      "nonClothSecondarySpecVOList": [
+        {
+          "parentSpecId": 3001,
+          "parentSpecName": "尺码",
+          "specId": 170021178,
+          "specName": "15*20cm带框"
+        }
+      ],
+      "isFirst": false,
+      "storageAttrName": "家居",
+      "volumeType": 10,
+      "purchaseTime": 1769469956996,
+      "greyKeyHitMap": {
+        "key_cn_BG_215946": true,
+        "key_BG_31572": false,
+        "key_cn_BG_226344": false
+      }
+    },
+    {
+      "subPurchaseOrderSn": "WB2601271601352",
+      "isCustomProduct": false,
+      "productSkcId": 95628161139,
+      "productSkcName": null,
+      "packageSn": "PC2601275719256",
+      "packageSkcNum": 1,
+      "totalPackageNum": 1,
+      "packageIndex": 1,
+      "deliveryOrderSn": "FH2601273870152",
+      "deliverSkcNum": 1,
+      "supplierId": 634418224109659,
+      "supplierName": "Fk Style",
+      "deliverTime": 1769532006062,
+      "deliveryStatus": 1,
+      "subWarehouseId": 434940853403,
+      "subWarehouseName": "义乌宝湾1号子仓（前置收货）",
+      "subWarehouseEnglishName": "YiWu BaoWan-1",
+      "expressDeliverySn": "",
+      "expressCompany": "",
+      "expressEnglishCompany": null,
+      "purchaseStockType": 1,
+      "settlementType": 1,
+      "deliveryMethod": 1,
+      "driverName": "郑景榕零贰捌",
+      "driverPhone": null,
+      "productName": "Jit，1Pc，椭圆形海报相框6.6x7.6in，水面上闭眼沉睡的人，复古乡村框架亚克力墙装饰，农舍墙壁艺术，理想的海报，印刷品和绘画，相框，增强客厅，卧室和办公室的家庭氛围",
+      "skcExtCode": "TY-018974",
+      "productSkuIdList": [
+        78411544644
+      ],
+      "nonClothSkuExtCode": "TY-018974",
+      "isClothCat": false,
+      "urgencyType": 1,
+      "nonClothMainSpecVOList": [],
+      "nonClothSecondarySpecVOList": [
+        {
+          "parentSpecId": 3001,
+          "parentSpecName": "尺码",
+          "specId": 170021178,
+          "specName": "15*20cm带框"
+        }
+      ],
+      "isFirst": true,
+      "storageAttrName": "家居",
+      "volumeType": 10,
+      "purchaseTime": 1769467054870,
+      "greyKeyHitMap": {
+        "key_cn_BG_215946": true,
+        "key_BG_31572": false,
+        "key_cn_BG_226344": false
+      }
+    }
+  ]
+}

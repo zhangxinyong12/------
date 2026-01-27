@@ -9,6 +9,8 @@ interface UserConfig {
   shippingMethod: string // 发货方式
 }
 
+// 打印数据缓存（已移动到content script中处理）
+
 // 监听来自 popup 或其他地方的消息
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // 处理保存配置并打开URL的请求
@@ -170,6 +172,58 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       })
       .catch((error) => {
         console.error("[Background] 处理打印后刷新继续执行错误:", error)
+        sendResponse({ success: false, error: error.message })
+      })
+    return true // 保持消息通道开放以支持异步响应
+  }
+
+  // 处理PDF生成完成的通知
+  if (message.type === "PDF_GENERATED") {
+    handlePDFGenerated(sender.tab?.id, message.data)
+      .then((result) => {
+        sendResponse({ success: true, data: result })
+      })
+      .catch((error) => {
+        console.error("[Background] 处理PDF生成通知错误:", error)
+        sendResponse({ success: false, error: error.message })
+      })
+    return true // 保持消息通道开放以支持异步响应
+  }
+
+  // 处理保存批量打印数据的请求
+  if (message.type === "SAVE_BATCH_PRINT_DATA") {
+    handleSaveBatchPrintData(message.data)
+      .then((result) => {
+        sendResponse({ success: true, data: result })
+      })
+      .catch((error) => {
+        console.error("[Background] 保存批量打印数据错误:", error)
+        sendResponse({ success: false, error: error.message })
+      })
+    return true // 保持消息通道开放以支持异步响应
+  }
+
+  // 处理获取批量打印数据的请求
+  if (message.type === "GET_BATCH_PRINT_DATA") {
+    getBatchPrintData()
+      .then((result) => {
+        sendResponse({ success: true, data: result })
+      })
+      .catch((error) => {
+        console.error("[Background] 获取批量打印数据错误:", error)
+        sendResponse({ success: false, error: error.message })
+      })
+    return true // 保持消息通道开放以支持异步响应
+  }
+
+  // 处理注入打印接口拦截脚本的请求
+  if (message.type === "INJECT_PRINT_INTERCEPTOR") {
+    handleInjectPrintInterceptor(sender.tab?.id)
+      .then((result) => {
+        sendResponse({ success: true, data: result })
+      })
+      .catch((error) => {
+        console.error("[Background] 注入打印拦截脚本错误:", error)
         sendResponse({ success: false, error: error.message })
       })
     return true // 保持消息通道开放以支持异步响应
@@ -1037,6 +1091,258 @@ async function handleNavigateToShippingList(tabId: number | undefined, data: { u
     }
   } catch (error: any) {
     console.error("[Background] handleNavigateToShippingList 发生错误:", error)
+    throw error
+  }
+}
+
+/**
+ * 处理PDF生成完成的通知
+ * 记录PDF生成信息，可用于后续处理
+ * @param tabId 标签页ID
+ * @param data 包含PDF文件名和时间戳的数据
+ */
+async function handlePDFGenerated(tabId: number | undefined, data: {
+  fileName: string
+  timestamp: number
+}): Promise<{
+  success: boolean
+  message: string
+  fileName: string
+}> {
+  try {
+    console.log(`[Background] 收到PDF生成通知，标签页ID: ${tabId}, 文件名: ${data.fileName}`)
+    
+    // 保存PDF生成记录到storage（可选）
+    const existingRecords = await chrome.storage.local.get('generatedPDFs')
+    const pdfRecords = existingRecords.generatedPDFs || []
+    
+    pdfRecords.push({
+      fileName: data.fileName,
+      timestamp: data.timestamp,
+      tabId: tabId
+    })
+    
+    // 只保留最近100条记录
+    if (pdfRecords.length > 100) {
+      pdfRecords.shift()
+    }
+    
+    await chrome.storage.local.set({
+      generatedPDFs: pdfRecords
+    })
+    
+    console.log(`[Background] PDF生成记录已保存，文件名: ${data.fileName}`)
+    
+    return {
+      success: true,
+      message: "PDF生成记录已保存",
+      fileName: data.fileName
+    }
+  } catch (error: any) {
+    console.error("[Background] handlePDFGenerated 发生错误:", error)
+    throw error
+  }
+}
+
+/**
+ * 保存批量打印数据
+ * 将content script拦截的打印接口数据保存到storage
+ * @param data 包含打印数据和时间戳的数据
+ */
+async function handleSaveBatchPrintData(data: {
+  printData: any
+  timestamp: number
+}): Promise<{
+  success: boolean
+  message: string
+}> {
+  try {
+    console.log('[Background] 保存批量打印数据:', data)
+    
+    // 保存到chrome.storage
+    await chrome.storage.local.set({ 
+      batchPrintData: {
+        printData: data.printData,
+        timestamp: data.timestamp
+      }
+    })
+
+    console.log('[Background] 批量打印数据已保存')
+
+    return {
+      success: true,
+      message: "批量打印数据已保存"
+    }
+  } catch (error: any) {
+    console.error("[Background] handleSaveBatchPrintData 发生错误:", error)
+    throw error
+  }
+}
+
+/**
+ * 获取批量打印数据
+ * 从storage中获取保存的打印数据
+ * @returns 打印数据对象或null
+ */
+async function getBatchPrintData(): Promise<any | null> {
+  try {
+    const result = await chrome.storage.local.get('batchPrintData')
+    const batchPrintData = result.batchPrintData || null
+    
+    if (batchPrintData) {
+      console.log('[Background] 获取到批量打印数据，时间戳:', batchPrintData.timestamp)
+    } else {
+      console.log('[Background] 未找到批量打印数据')
+    }
+    
+    return batchPrintData
+  } catch (error: any) {
+    console.error("[Background] getBatchPrintData 发生错误:", error)
+    throw error
+  }
+}
+
+/**
+ * 注入打印接口拦截脚本到页面上下文
+ * 使用chrome.scripting.executeScript将脚本注入到页面上下文中
+ * @param tabId 标签页ID
+ */
+async function handleInjectPrintInterceptor(tabId: number | undefined): Promise<{
+  success: boolean
+  message: string
+}> {
+  try {
+    if (!tabId) {
+      throw new Error("无法获取标签页ID")
+    }
+
+    console.log(`[Background] 开始注入打印接口拦截脚本，标签页ID: ${tabId}`)
+
+    // 读取injected.ts文件内容
+    // 注意：在Plasmo中，我们需要使用chrome.runtime.getURL获取文件路径
+    // 但由于我们需要直接注入代码，我们可以将injected.ts的内容作为字符串注入
+    
+    // 定义注入到页面上下文的函数
+    // 这个函数会在页面上下文中执行，可以访问页面的window.fetch
+    // 注意：这个函数中的代码会在页面上下文中执行，不能使用TypeScript类型注解
+    // @ts-ignore - 注入函数会在页面上下文中执行，window对象可能有自定义属性
+    const injectInterceptor = () => {
+      // 检查是否已经设置过拦截器
+      // 使用类型断言，因为页面上下文中的window对象可能有自定义属性
+      if ((window as any).__printAPIIntercepted) {
+        console.log('[Injected] 打印接口拦截器已设置，跳过')
+        return
+      }
+      
+      // 保存原始的fetch函数
+      const originalFetch = window.fetch
+      
+      // 重写fetch函数
+      window.fetch = async function(...args: any[]) {
+        // 获取URL字符串
+        let url: string
+        if (typeof args[0] === 'string') {
+          url = args[0]
+        } else if (args[0] instanceof Request) {
+          url = args[0].url
+        } else if (args[0] && typeof args[0] === 'object' && 'url' in args[0]) {
+          url = String(args[0].url)
+        } else {
+          url = String(args[0])
+        }
+        const urlLower = url.toLowerCase()
+        
+        // 检查是否是打印相关的接口
+        // 特别注意：printBoxMarks 是批量打印接口
+        const isPrintRequest = urlLower.includes('print') || 
+                              urlLower.includes('label') || 
+                              urlLower.includes('packing') ||
+                              urlLower.includes('shipping') ||
+                              urlLower.includes('batchprint') ||
+                              urlLower.includes('batch-print') ||
+                              urlLower.includes('printlabel') ||
+                              urlLower.includes('printboxmarks') ||
+                              urlLower.includes('print-box-marks')
+        
+        if (isPrintRequest) {
+          console.log('[Injected] 检测到打印接口请求:', url)
+          
+          try {
+            // 调用原始的fetch
+            const response = await originalFetch.apply(this, args)
+            
+            // 克隆响应，以便我们可以读取数据而不影响原始响应
+            const clonedResponse = response.clone()
+            
+            // 异步处理响应数据
+            clonedResponse.text().then(async (text) => {
+              try {
+                // 尝试解析JSON
+                let data
+                try {
+                  data = JSON.parse(text)
+                } catch {
+                  // 如果不是JSON，可能是HTML或其他格式
+                  data = text
+                }
+                
+                console.log('[Injected] 获取到打印接口返回的数据:', data)
+                
+                // 通过postMessage通知content script
+                window.postMessage({
+                  type: 'PRINT_API_RESPONSE',
+                  source: 'injected-script',
+                  data: {
+                    url: url,
+                    data: data,
+                    timestamp: Date.now()
+                  }
+                }, '*')
+                
+                console.log('[Injected] 已通过postMessage通知content script')
+                
+              } catch (error) {
+                console.error('[Injected] 处理打印接口响应失败:', error)
+              }
+            }).catch((error) => {
+              console.error('[Injected] 读取打印接口响应失败:', error)
+            })
+            
+            return response
+          } catch (error) {
+            console.error('[Injected] 拦截打印接口请求失败:', error)
+            return originalFetch.apply(this, args)
+          }
+        }
+        
+        // 非打印请求，直接调用原始fetch
+        return originalFetch.apply(this, args)
+      }
+      
+      // 标记拦截器已设置
+      // 使用类型断言，因为页面上下文中的window对象可能有自定义属性
+      ;(window as any).__printAPIIntercepted = true
+      
+      console.log('[Injected] 打印接口拦截器已设置')
+    }
+
+    // 使用chrome.scripting.executeScript注入脚本到页面上下文
+    // world: 'MAIN' 表示注入到页面上下文（MAIN world），而不是isolated world
+    // 这样注入的脚本可以访问页面的window对象和fetch函数
+    await chrome.scripting.executeScript({
+      target: { tabId: tabId },
+      func: injectInterceptor,
+      world: 'MAIN' // 注入到页面上下文（MAIN world），而不是isolated world
+    })
+
+    console.log('[Background] 打印接口拦截脚本已成功注入')
+
+    return {
+      success: true,
+      message: "打印接口拦截脚本已注入"
+    }
+  } catch (error: any) {
+    console.error("[Background] handleInjectPrintInterceptor 发生错误:", error)
     throw error
   }
 }
