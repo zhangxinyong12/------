@@ -3,39 +3,146 @@
  * 插件的主要控制界面，包含批量自动发货表单
  */
 
-import { SendOutlined } from "@ant-design/icons"
+import { SettingOutlined, SendOutlined } from "@ant-design/icons"
 import { Button, Card, Form, Select, Space, Typography, message } from "antd"
-import React, { useState } from "react"
+import React, { useEffect, useState } from "react"
 
 import "./style.css"
 
 const { Title } = Typography
 const { Option } = Select
 
-// 发货仓库选项
-// value和label保持一致，便于理解和使用
-const WAREHOUSE_OPTIONS = [
+// 默认发货仓库选项
+const DEFAULT_WAREHOUSE_OPTIONS = [
   { label: "莆田仓库", value: "莆田仓库" },
   { label: "义乌仓库", value: "义乌仓库" }
 ]
 
 // 发货方式选项
-// value和label保持一致，便于理解和使用
 const SHIPPING_METHOD_OPTIONS = [
   { label: "自送", value: "自送" },
   { label: "自行委托第三方物流", value: "自行委托第三方物流" },
   { label: "在线物流下单", value: "在线物流下单" }
 ]
 
+// 默认产品选项
+const DEFAULT_PRODUCT_OPTIONS = [
+  { label: "0.2亚克力", value: "0.2亚克力" },
+  { label: "0.5亚克力", value: "0.5亚克力" },
+  { label: "1亚克力", value: "1亚克力" },
+  { label: "1.2亚克力", value: "1.2亚克力" },
+  { label: "0.3木板", value: "0.3木板" },
+  { label: "0.5木板", value: "0.5木板" },
+  { label: "1.5木板", value: "1.5木板" },
+  { label: "0.4中空板", value: "0.4中空板" },
+  { label: "0.9木板", value: "0.9木板" },
+  { label: "0.9支架", value: "0.9支架" },
+  { label: "30*45框画", value: "30*45框画" },
+  { label: "40*60框画", value: "40*60框画" },
+  { label: "四叶草", value: "四叶草" },
+  { label: "0.3叠雕", value: "0.3叠雕" },
+  { label: "挂钩架", value: "挂钩架" },
+  { label: "置物架", value: "置物架" },
+  { label: "15圆", value: "15圆" },
+  { label: "椭圆", value: "椭圆" },
+  { label: "椭圆三联", value: "椭圆三联" },
+  { label: "四叶草三联", value: "四叶草三联" },
+  { label: "浴室挂钩", value: "浴室挂钩" },
+  { label: "0.5桌牌", value: "0.5桌牌" },
+  { label: "0.3挂钩", value: "0.3挂钩" },
+  { label: "0.5挂钩", value: "0.5挂钩" },
+  { label: "雪弗板挂钩", value: "雪弗板挂钩" },
+  { label: "三层托盘", value: "三层托盘" },
+  { label: "小挂钩", value: "小挂钩" },
+  { label: "雪弗板", value: "雪弗板" },
+  { label: "化妆包", value: "化妆包" },
+  { label: "纸巾架", value: "纸巾架" },
+  { label: "包边雪弗板", value: "包边雪弗板" },
+  { label: "亚克力立牌", value: "亚克力立牌" },
+  { label: "方框", value: "方框" },
+  { label: "八角框", value: "八角框" }
+]
+
+// 选项数据类型
+interface OptionItem {
+  label: string
+  value: string
+}
+
 // 表单数据类型定义
 interface ShipmentFormData {
   warehouse: string // 发货仓库
   shippingMethod: string // 发货方式
+  product: string // 产品
 }
 
 const PopupPage: React.FC = () => {
   const [form] = Form.useForm<ShipmentFormData>()
   const [loading, setLoading] = useState(false)
+  const [warehouseOptions, setWarehouseOptions] = useState<OptionItem[]>(DEFAULT_WAREHOUSE_OPTIONS)
+  const [productOptions, setProductOptions] = useState<OptionItem[]>(DEFAULT_PRODUCT_OPTIONS)
+
+  /**
+   * 从 chrome.storage 加载配置
+   */
+  useEffect(() => {
+    const loadConfig = async () => {
+      try {
+        const result = await chrome.storage.local.get(["warehouseOptions", "productOptions"])
+        
+        if (result.warehouseOptions && Array.isArray(result.warehouseOptions) && result.warehouseOptions.length > 0) {
+          setWarehouseOptions(result.warehouseOptions)
+        }
+        
+        if (result.productOptions && Array.isArray(result.productOptions) && result.productOptions.length > 0) {
+          setProductOptions(result.productOptions)
+        }
+      } catch (error) {
+        console.error("[Popup] 加载配置失败:", error)
+      }
+    }
+
+    loadConfig()
+
+    // 监听 storage 变化，当 options 页面保存配置后自动更新
+    const handleStorageChange = (changes: { [key: string]: chrome.storage.StorageChange }) => {
+      if (changes.warehouseOptions) {
+        setWarehouseOptions(changes.warehouseOptions.newValue || DEFAULT_WAREHOUSE_OPTIONS)
+      }
+      if (changes.productOptions) {
+        setProductOptions(changes.productOptions.newValue || DEFAULT_PRODUCT_OPTIONS)
+      }
+    }
+
+    chrome.storage.onChanged.addListener(handleStorageChange)
+
+    return () => {
+      chrome.storage.onChanged.removeListener(handleStorageChange)
+    }
+  }, [])
+
+  /**
+   * 打开设置页面
+   * 使用 mousedown 触发，避免 popup 在 click 完成前关闭导致无反应
+   * 先尝试 openOptionsPage，失败时用 tabs.create 打开 options 地址
+   */
+  const handleOpenSettings = (e?: React.MouseEvent) => {
+    if (e) {
+      e.preventDefault()
+      e.stopPropagation()
+    }
+    const optionsUrl = chrome.runtime.getURL("options.html")
+    const openOptions = () => {
+      if (typeof chrome.runtime.openOptionsPage === "function") {
+        Promise.resolve(chrome.runtime.openOptionsPage()).catch(() => {
+          chrome.tabs.create({ url: optionsUrl })
+        })
+      } else {
+        chrome.tabs.create({ url: optionsUrl })
+      }
+    }
+    openOptions()
+  }
 
   /**
    * 直接执行发货步骤（开发阶段测试用）
@@ -71,7 +178,8 @@ const PopupPage: React.FC = () => {
         type: 'START_SHIPMENT_STEPS_DIRECTLY',
         data: {
           warehouse: values.warehouse || '义乌仓库',
-          shippingMethod: values.shippingMethod || '自送'
+          shippingMethod: values.shippingMethod || '自送',
+          product: values.product || ''
         }
       })
 
@@ -109,6 +217,7 @@ const PopupPage: React.FC = () => {
         data: {
           warehouse: values.warehouse,
           shippingMethod: values.shippingMethod,
+          product: values.product,
           url: "https://agentseller.temu.com/stock/fully-mgt/order-manage-urgency"
         }
       })
@@ -137,7 +246,8 @@ const PopupPage: React.FC = () => {
           await chrome.storage.local.set({
             userConfig: {
               warehouse: values.warehouse,
-              shippingMethod: values.shippingMethod
+              shippingMethod: values.shippingMethod,
+              product: values.product
             }
           })
           message.success("页面已打开，配置已保存")
@@ -157,11 +267,28 @@ const PopupPage: React.FC = () => {
   return (
     <div className="w-[400px] p-4">
         <Space direction="vertical" size="middle" style={{ width: "100%" }}>
-          {/* 标题 */}
-          <div className="text-center">
-            <Title level={4} style={{ margin: 0 }}>
-              批量自动发货
-            </Title>
+          {/* 标题和设置按钮 */}
+          <div className="relative">
+            <div className="text-center">
+              <Title level={4} style={{ margin: 0 }}>
+                批量自动发货
+              </Title>
+            </div>
+            {/* 右上角设置按钮：用 onMouseDown 避免 popup 先关闭导致点击无反应 */}
+            <Button
+              type="text"
+              htmlType="button"
+              icon={<SettingOutlined />}
+              onMouseDown={handleOpenSettings}
+              style={{
+                position: "absolute",
+                top: 0,
+                right: 0,
+                padding: "4px 8px",
+                minWidth: 32,
+                minHeight: 32
+              }}
+              title="打开设置页面" />
           </div>
 
           {/* 表单 */}
@@ -172,7 +299,8 @@ const PopupPage: React.FC = () => {
             autoComplete="off"
             initialValues={{
               warehouse: "义乌仓库", // 默认选择义乌仓库
-              shippingMethod: "自送" // 默认选择自送方式
+              shippingMethod: "自送", // 默认选择自送方式
+              product: "" // 产品默认为空，需要用户选择
             }}>
             {/* 发货仓库选择 */}
             <Form.Item
@@ -184,7 +312,7 @@ const PopupPage: React.FC = () => {
               <Select
                 placeholder="请选择发货仓库"
                 size="large">
-                {WAREHOUSE_OPTIONS.map((option) => (
+                {warehouseOptions.map((option) => (
                   <Option key={option.value} value={option.value}>
                     {option.label}
                   </Option>
@@ -203,6 +331,28 @@ const PopupPage: React.FC = () => {
                 placeholder="请选择发货方式"
                 size="large">
                 {SHIPPING_METHOD_OPTIONS.map((option) => (
+                  <Option key={option.value} value={option.value}>
+                    {option.label}
+                  </Option>
+                ))}
+              </Select>
+            </Form.Item>
+
+            {/* 产品选择 */}
+            <Form.Item
+              label="产品"
+              name="product"
+              rules={[
+                { required: true, message: "请选择产品" }
+              ]}>
+              <Select
+                placeholder="请选择产品"
+                size="large"
+                showSearch
+                filterOption={(input, option) =>
+                  (option?.children as unknown as string)?.toLowerCase().includes(input.toLowerCase())
+                }>
+                {productOptions.map((option) => (
                   <Option key={option.value} value={option.value}>
                     {option.label}
                   </Option>
