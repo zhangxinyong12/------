@@ -8,6 +8,10 @@ import { findDom } from "./utils/dom"
 import html2canvas from "html2canvas"
 // @ts-ignore - html2canvas和jspdf的类型定义可能不完整
 import { jsPDF } from "jspdf"
+import React from "react"
+import { createRoot } from "react-dom/client"
+import type { Root } from "react-dom/client"
+import { PrintLabel } from "./components/PrintLabel"
 
 /**
  * Sleep函数
@@ -1056,6 +1060,11 @@ async function selectAllOrdersForShipment() {
  * 这样可以确保html2canvas能正确捕获canvas内容（特别是二维码）
  * @param element 要处理的元素
  */
+/**
+ * 将canvas元素转换为img元素
+ * 这样可以确保html2canvas能正确捕获canvas内容（特别是二维码）
+ * @param element 要处理的元素
+ */
 function convertCanvasToImage(element: HTMLElement): void {
   // 获取元素所在的文档上下文（可能是主文档或iframe文档）
   const ownerDocument = element.ownerDocument || document
@@ -1102,6 +1111,114 @@ function convertCanvasToImage(element: HTMLElement): void {
 }
 
 /**
+ * 将SVG元素转换为img元素
+ * html2canvas可能无法正确捕获SVG，所以需要先转换为图片（特别是条形码）
+ * @param element 要处理的元素
+ */
+async function convertSVGToImage(element: HTMLElement): Promise<void> {
+  // 获取元素所在的文档上下文（可能是主文档或iframe文档）
+  const ownerDocument = element.ownerDocument || document
+  const ownerWindow = ownerDocument.defaultView || window
+  
+  // 查找所有SVG元素
+  const svgs = element.querySelectorAll('svg')
+  
+  for (let i = 0; i < svgs.length; i++) {
+    const svg = svgs[i] as SVGSVGElement
+    try {
+      // 获取SVG的尺寸
+      const svgRect = svg.getBoundingClientRect()
+      const width = svgRect.width || parseInt(svg.getAttribute('width') || '0') || 100
+      const height = svgRect.height || parseInt(svg.getAttribute('height') || '0') || 50
+      
+      // 克隆SVG以避免修改原始元素
+      const clonedSvg = svg.cloneNode(true) as SVGSVGElement
+      
+      // 确保SVG有明确的尺寸
+      if (!clonedSvg.getAttribute('width')) {
+        clonedSvg.setAttribute('width', String(width))
+      }
+      if (!clonedSvg.getAttribute('height')) {
+        clonedSvg.setAttribute('height', String(height))
+      }
+      
+      // 将SVG转为 data URL（不用 blob URL）
+      // 社区结论：html2canvas 会克隆节点，克隆体里的 blob URL 可能失效导致 PDF 中空白；
+      // 使用 data URL 可在克隆体中正常绘制。参考：SO 72377709、53209587
+      const svgData = new XMLSerializer().serializeToString(clonedSvg)
+      const dataUrl = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)))
+      
+      // 创建用于替换 SVG 的 img，直接用 data URL
+      const img = ownerDocument.createElement('img')
+      img.style.width = svg.style.width || `${width}px`
+      img.style.height = svg.style.height || `${height}px`
+      img.style.display = svg.style.display || 'block'
+      img.style.visibility = svg.style.visibility || 'visible'
+      
+      // 复制SVG的所有样式
+      if (svg.style.cssText) {
+        img.style.cssText = svg.style.cssText
+      }
+      
+      // 复制SVG的class和id
+      if (svg.className) {
+        img.className = svg.className.baseVal || svg.className.toString()
+      }
+      if (svg.id) {
+        img.id = svg.id
+      }
+      
+      // 先插入到 DOM（隐藏），再等解码完成后替换，避免闪烁与未绘制
+      img.style.position = 'absolute'
+      img.style.opacity = '0'
+      img.style.pointerEvents = 'none'
+      if (svg.parentNode) {
+        svg.parentNode.insertBefore(img, svg)
+      } else {
+        ownerDocument.body.appendChild(img)
+      }
+      
+      // 使用 data URL 仍须等待解码，以保证 html2canvas 截屏时已绘制
+      await new Promise<void>((resolve) => {
+        const timeout = setTimeout(() => {
+          console.warn(`[Content] SVG #${i} 图片加载超时`)
+          resolve()
+        }, 5000)
+        img.onload = () => {
+          clearTimeout(timeout)
+          img.style.position = ''
+          img.style.opacity = '1'
+          img.style.pointerEvents = ''
+          resolve()
+        }
+        img.onerror = () => {
+          clearTimeout(timeout)
+          console.warn(`[Content] SVG #${i} 图片加载失败`)
+          resolve()
+        }
+        img.src = dataUrl
+      })
+      
+      // 替换SVG为img（如果img还在临时位置，移动到正确位置）
+      if (svg.parentNode && img.parentNode !== svg.parentNode) {
+        svg.parentNode.insertBefore(img, svg)
+      }
+      if (svg.parentNode) {
+        svg.parentNode.removeChild(svg)
+      }
+      if (img.parentNode === ownerDocument.body && svg.parentNode) {
+        ownerDocument.body.removeChild(img)
+        svg.parentNode.insertBefore(img, svg.nextSibling)
+      }
+      
+      console.log(`[Content] 已将SVG #${i} 转换为图片`)
+    } catch (error) {
+      console.warn(`[Content] 转换SVG #${i} 失败:`, error)
+    }
+  }
+}
+
+/**
  * 生成PDF文件
  * 将页面内容转换为PDF并下载
  * @param element 要转换为PDF的元素（可选，默认使用整个body）
@@ -1114,41 +1231,164 @@ async function generatePDF(element?: HTMLElement, fileName?: string): Promise<vo
     // 确定要转换的元素
     const targetElement = element || document.body
     
+    // 检查元素所在的文档上下文（可能是iframe）
+    const ownerDocument = targetElement.ownerDocument || document
+    const ownerWindow = ownerDocument.defaultView || window
+    
     // 在转换前，将元素内的所有canvas转换为img标签
     // 这样可以确保html2canvas能正确捕获canvas内容（特别是二维码）
     console.log('[Content] 正在将canvas转换为图片以确保正确捕获...')
+    const canvasCount = targetElement.querySelectorAll('canvas').length
+    console.log(`[Content] 找到 ${canvasCount} 个canvas元素`)
     convertCanvasToImage(targetElement)
     
-    // 额外等待一小段时间确保图片已加载
-    await sleep(100)
+    // 将SVG转换为img标签（特别是条形码）
+    // html2canvas可能无法正确捕获SVG，所以需要先转换为图片
+    console.log('[Content] 正在将SVG转换为图片以确保正确捕获...')
+    const svgCount = targetElement.querySelectorAll('svg').length
+    console.log(`[Content] 找到 ${svgCount} 个SVG元素`)
+    await convertSVGToImage(targetElement)
+    
+    // 验证转换结果
+    const imgCount = targetElement.querySelectorAll('img').length
+    console.log(`[Content] 转换后找到 ${imgCount} 个img元素`)
+    
+    // 检查二维码和条形码容器
+    const qrCodeElement = targetElement.querySelector('#qrCode')
+    const barcodeElement = targetElement.querySelector('#barcode')
+    if (qrCodeElement) {
+      const qrCanvas = qrCodeElement.querySelector('canvas')
+      const qrImg = qrCodeElement.querySelector('img')
+      const qrSvg = qrCodeElement.querySelector('svg')
+      console.log(`[Content] 二维码容器状态: canvas=${!!qrCanvas}, svg=${!!qrSvg}, img=${!!qrImg}`)
+      if (qrImg) {
+        console.log(`[Content] 二维码img src:`, qrImg.src.substring(0, 100))
+        console.log(`[Content] 二维码img complete:`, qrImg.complete)
+        console.log(`[Content] 二维码img naturalWidth:`, qrImg.naturalWidth)
+        console.log(`[Content] 二维码img naturalHeight:`, qrImg.naturalHeight)
+      }
+    }
+    if (barcodeElement) {
+      const barSvg = barcodeElement.querySelector('svg')
+      const barImg = barcodeElement.querySelector('img')
+      console.log(`[Content] 条形码容器状态: svg=${!!barSvg}, img=${!!barImg}`)
+      if (barImg) {
+        console.log(`[Content] 条形码img src:`, barImg.src.substring(0, 100))
+        console.log(`[Content] 条形码img complete:`, barImg.complete)
+        console.log(`[Content] 条形码img naturalWidth:`, barImg.naturalWidth)
+        console.log(`[Content] 条形码img naturalHeight:`, barImg.naturalHeight)
+      }
+    }
+    
+    // 等待所有图片加载完成
+    const images = targetElement.querySelectorAll('img')
+    console.log(`[Content] 等待 ${images.length} 个图片加载完成...`)
+    await Promise.all(
+      Array.from(images).map((img) => {
+        return new Promise<void>((resolve) => {
+          if (img.complete) {
+            console.log(`[Content] 图片已加载完成:`, img.src.substring(0, 50))
+            resolve()
+          } else {
+            img.onload = () => {
+              console.log(`[Content] 图片加载完成:`, img.src.substring(0, 50))
+              resolve()
+            }
+            img.onerror = () => {
+              console.error(`[Content] 图片加载失败:`, img.src.substring(0, 50))
+              resolve() // 即使失败也继续
+            }
+            // 超时处理
+            setTimeout(() => {
+              console.warn(`[Content] 图片加载超时:`, img.src.substring(0, 50))
+              resolve()
+            }, 5000)
+          }
+        })
+      })
+    )
+    
+    // 额外等待一小段时间确保图片已完全渲染
+    await sleep(1000)
     
     // 使用html2canvas将元素转换为canvas
+    // html2canvas会自动处理iframe中的元素
     console.log('[Content] 正在将页面内容转换为图片...')
-    const canvas = await html2canvas(targetElement, {
-      scale: 2, // 提高清晰度
-      useCORS: true, // 允许跨域图片
-      allowTaint: true, // 允许读取canvas内容（重要：用于捕获二维码canvas）
-      logging: false, // 关闭日志
-      backgroundColor: '#ffffff', // 白色背景
-      foreignObjectRendering: false // 禁用foreignObject渲染，确保canvas能被正确捕获
-    })
+    console.log('[Content] 目标元素:', targetElement.tagName, '文档:', ownerDocument === document ? '主文档' : 'iframe文档')
+    console.log('[Content] html2canvas 开始执行...')
     
-    // 获取canvas的宽高（像素转毫米，1英寸=25.4毫米，DPI通常为96）
-    const imgWidth = canvas.width
-    const imgHeight = canvas.height
-    const pdfWidth = (imgWidth * 25.4) / 96 // 转换为毫米
-    const pdfHeight = (imgHeight * 25.4) / 96 // 转换为毫米
+    // 社区方案（SO 53209587、32481054）：启用 foreignObjectRendering，并在 onClone 中为克隆体内的 SVG 设置 width/height，
+    // 否则 html2canvas 对 SVG 或由 SVG 转成的图片可能无法正确绘制到 canvas，导致 PDF 中二维码/条形码空白
+    // 注意：由于我们已经将 SVG 转换为 img，onclone 中可能找不到 SVG，这是正常的
+    let canvas
+    try {
+      // 添加超时保护，避免 html2canvas 无限期卡住
+      const html2canvasPromise = html2canvas(targetElement, {
+        scale: 1, // 使用1倍缩放，因为目标尺寸是800x800
+        width: 800,
+        height: 800,
+        useCORS: true, // 允许跨域图片
+        allowTaint: true, // 允许读取 canvas 内容（用于捕获二维码等）
+        logging: true, // 临时开启日志以便调试
+        backgroundColor: '#ffffff',
+        foreignObjectRendering: true, // 开启以正确渲染 SVG/foreignObject，解决 PDF 中码图空白
+        onclone: (clonedDoc: any) => {
+          console.log('[Content] html2canvas onclone 回调执行中...')
+          try {
+            // 在克隆体内查找 SVG（虽然我们已经转成 img，但保留此逻辑以防万一）
+            const svgElements = clonedDoc.body ? clonedDoc.body.getElementsByTagName('svg') : []
+            console.log(`[Content] onclone 中找到 ${svgElements.length} 个 SVG 元素`)
+            if (svgElements.length > 0) {
+              Array.from(svgElements).forEach((svg: Element, index: number) => {
+                try {
+                  const bBox = (svg as SVGSVGElement).getBBox()
+                  ;(svg as SVGSVGElement).setAttribute('width', String(bBox.width))
+                  ;(svg as SVGSVGElement).setAttribute('height', String(bBox.height))
+                  console.log(`[Content] onclone 已设置 SVG #${index} 尺寸: ${bBox.width}x${bBox.height}`)
+                } catch (err) {
+                  // getBBox 在部分 SVG 上可能抛错，忽略即可
+                  console.warn(`[Content] onclone SVG #${index} getBBox 失败:`, err)
+                }
+              })
+            }
+            console.log('[Content] html2canvas onclone 回调完成')
+          } catch (err) {
+            console.error('[Content] html2canvas onclone 回调出错:', err)
+          }
+        }
+      })
+      
+      // 设置 30 秒超时
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => {
+          reject(new Error('html2canvas 执行超时（30秒）'))
+        }, 30000)
+      })
+      
+      canvas = await Promise.race([html2canvasPromise, timeoutPromise])
+      console.log('[Content] html2canvas 执行完成，canvas 尺寸:', canvas.width, 'x', canvas.height)
+    } catch (error: any) {
+      console.error('[Content] html2canvas 执行失败:', error)
+      console.error('[Content] 错误详情:', error.message, error.stack)
+      throw error
+    }
     
-    // 创建PDF对象（A4纸张大小：210mm x 297mm）
+    // 固定PDF尺寸为800x800像素（转换为点，1px = 0.75pt）
+    const pdfWidth = 800 * 0.75 // 600pt
+    const pdfHeight = 800 * 0.75 // 600pt
+    
+    // 创建PDF对象，使用点（pt）作为单位
     const pdf = new jsPDF({
-      orientation: pdfWidth > pdfHeight ? 'landscape' : 'portrait',
-      unit: 'mm',
-      format: [pdfWidth, pdfHeight] // 使用实际尺寸
+      orientation: 'portrait',
+      unit: 'pt',
+      format: [pdfWidth, pdfHeight], // 800x800像素 = 600x600点
+      compress: true // 启用PDF压缩
     })
     
-    // 将canvas转换为图片并添加到PDF
-    const imgData = canvas.toDataURL('image/png')
-    pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight)
+    // 将canvas转换为JPEG格式（比PNG更小）并添加到PDF
+    // 使用0.85质量平衡文件大小和图片质量
+    const imgData = canvas.toDataURL('image/jpeg', 0.85)
+    pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight, undefined, 'FAST') // 'FAST'模式进一步压缩
     
     // 生成文件名
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5)
@@ -1243,7 +1483,271 @@ function interceptPrintAPI(): Promise<void> {
 }
 
 /**
- * 渲染打印标签内容
+ * 使用React组件渲染打印标签并生成PDF
+ * 直接在页面中创建容器，渲染React组件，生成PDF，然后删除DOM
+ * @param data 接口返回的数据
+ * @param fileName PDF文件名（不含扩展名）
+ * @returns Promise，PDF生成完成后resolve
+ */
+async function renderPrintLabelAndGeneratePDF(data: any, fileName: string): Promise<void> {
+  console.log('[Content] 开始使用React组件渲染打印标签并生成PDF:', fileName)
+  
+  // 创建容器元素（直接显示在页面上，方便查看）
+  const container = document.createElement('div')
+  container.id = `print-label-container-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+  container.style.position = 'fixed'
+  container.style.top = '50px'
+  container.style.left = '50px'
+  container.style.width = '800px'
+  container.style.height = '800px'
+  container.style.background = 'white'
+  container.style.zIndex = '999999'
+  container.style.border = '2px solid red'
+  container.style.boxShadow = '0 0 20px rgba(0,0,0,0.5)'
+  document.body.appendChild(container)
+  
+  console.log('[Content] 📋 容器已创建并显示在页面上，ID:', container.id)
+  
+  let reactRoot: Root | null = null
+  
+  try {
+    // 使用React组件渲染打印标签
+    reactRoot = renderPrintLabelWithReact(container, data)
+    
+    // 等待React组件渲染完成（增加等待时间）
+    await sleep(2000)
+    
+    // 验证二维码和条形码是否已渲染
+    const qrCodeElement = container.querySelector('#qrCode')
+    const barcodeElement = container.querySelector('#barcode')
+    
+    console.log('[Content] 🔍 验证二维码和条形码状态...')
+    console.log('[Content] 二维码容器元素:', qrCodeElement)
+    console.log('[Content] 条形码容器元素:', barcodeElement)
+    
+    // 多次检查，确保SVG已渲染
+    let qrSvg: SVGElement | null = null
+    let barSvg: SVGElement | null = null
+    let retryCount = 0
+    const maxRetries = 10
+    
+    while (retryCount < maxRetries && (!qrSvg || !barSvg)) {
+      if (qrCodeElement) {
+        qrSvg = qrCodeElement.querySelector('svg')
+        if (qrSvg) {
+          console.log(`[Content] ✅ 二维码SVG已找到，子元素数量:`, qrSvg.children.length)
+        } else {
+          console.log(`[Content] ⏳ 等待二维码SVG渲染... (${retryCount + 1}/${maxRetries})`)
+        }
+      }
+      
+      if (barcodeElement) {
+        barSvg = barcodeElement.querySelector('svg')
+        if (barSvg) {
+          console.log(`[Content] ✅ 条形码SVG已找到，子元素数量:`, barSvg.children.length)
+        } else {
+          console.log(`[Content] ⏳ 等待条形码SVG渲染... (${retryCount + 1}/${maxRetries})`)
+        }
+      }
+      
+      if (!qrSvg || !barSvg) {
+        await sleep(500)
+        retryCount++
+      }
+    }
+    
+    if (!qrSvg) {
+      console.error('[Content] ❌ 二维码SVG未找到！')
+      console.log('[Content] 二维码容器内容:', qrCodeElement?.innerHTML)
+      console.log('[Content] 二维码容器子元素:', qrCodeElement?.children)
+    } else {
+      console.log('[Content] ✅ 二维码SVG已确认存在')
+    }
+    
+    if (!barSvg) {
+      console.error('[Content] ❌ 条形码SVG未找到！')
+      console.log('[Content] 条形码容器内容:', barcodeElement?.innerHTML)
+      console.log('[Content] 条形码容器子元素:', barcodeElement?.children)
+    } else {
+      console.log('[Content] ✅ 条形码SVG已确认存在')
+    }
+    
+    // 如果SVG存在，再等待一次确保完全渲染
+    if (qrSvg || barSvg) {
+      await sleep(1000)
+    } else {
+      // 如果SVG不存在，等待更长时间
+      console.warn('[Content] ⚠️ SVG未找到，等待更长时间...')
+      await sleep(2000)
+    }
+    
+    // 再次检查SVG是否存在
+    const finalQrSvg = container.querySelector('#qrCode svg')
+    const finalBarSvg = container.querySelector('#barcode svg')
+    console.log('[Content] 最终检查 - 二维码SVG:', !!finalQrSvg, '条形码SVG:', !!finalBarSvg)
+    
+    // 生成PDF
+    const pdfFileName = `${fileName}.pdf`
+    await generatePDF(container, pdfFileName)
+    console.log(`[Content] ✅ PDF 已生成并下载: ${pdfFileName}`)
+    
+  } finally {
+    // 暂时不删除DOM容器，让用户可以看到渲染结果
+    // 清理React根（注释掉，方便查看）
+    // if (reactRoot) {
+    //   reactRoot.unmount()
+    // }
+    
+    // 删除DOM容器（注释掉，方便查看）
+    // if (container.parentNode) {
+    //   container.parentNode.removeChild(container)
+    // }
+    
+    console.log('[Content] ✅ PDF已生成，DOM容器保留在页面上供查看')
+    console.log('[Content] 📋 容器ID:', container.id)
+    console.log('[Content] 📋 可以在控制台执行以下命令查看容器:')
+    console.log(`[Content] document.getElementById('${container.id}')`)
+    console.log('[Content] 📋 可以在控制台执行以下命令删除容器:')
+    console.log(`[Content] document.getElementById('${container.id}')?.remove()`)
+  }
+}
+
+/**
+ * 使用React组件渲染打印标签到DOM元素
+ * @param container 容器DOM元素
+ * @param data 接口返回的数据
+ * @returns React Root实例，用于后续清理
+ */
+function renderPrintLabelWithReact(container: HTMLElement, data: any): Root {
+  console.log('[Content] 开始使用React组件渲染打印标签，数据:', data)
+  
+  // 解析接口返回的数据结构
+  let labelData: any = null
+  
+  // 如果数据有result字段且是数组，取第一个元素
+  if (data && data.result && Array.isArray(data.result) && data.result.length > 0) {
+    labelData = data.result[0]
+  } else if (data && Array.isArray(data) && data.length > 0) {
+    labelData = data[0]
+  } else if (data && typeof data === 'object') {
+    labelData = data
+  } else {
+    throw new Error('无法解析打印标签数据')
+  }
+  
+  // 从labelData中提取字段
+  const warehouseFull = labelData?.subWarehouseName || ''
+  const warehouse = warehouseFull.replace(/\s*[（(]前置收货[）)]\s*$/, '')
+  const isJIT = labelData?.purchaseStockType === 1 || false
+  const isUrgent = labelData?.urgencyType === 1 || false
+  const shopName = labelData?.supplierName || 'Fk Style'
+  
+  const deliverTime = labelData?.deliverTime
+  let printTime = new Date().toLocaleString('zh-CN', { 
+    year: 'numeric', 
+    month: '2-digit', 
+    day: '2-digit', 
+    hour: '2-digit', 
+    minute: '2-digit', 
+    second: '2-digit',
+    hour12: false
+  }).replace(/\//g, '-')
+  if (deliverTime) {
+    const date = new Date(deliverTime)
+    printTime = date.toLocaleString('zh-CN', { 
+      year: 'numeric', 
+      month: '2-digit', 
+      day: '2-digit', 
+      hour: '2-digit', 
+      minute: '2-digit', 
+      second: '2-digit',
+      hour12: false
+    }).replace(/\//g, '-')
+  }
+  
+  const productName = labelData?.productName || ''
+  const skcId = labelData?.productSkcId || ''
+  const sku = labelData?.skcExtCode || labelData?.nonClothSkuExtCode || ''
+  const quantity = labelData?.packageSkcNum || labelData?.deliverSkcNum || 1
+  
+  // 使用packageSn字段（确认字段名）
+  const packageNo = labelData?.packageSn || ''
+  const packageIndex = labelData?.packageIndex || 1
+  const totalPackages = labelData?.totalPackageNum || 1
+  const driverName = labelData?.driverName || ''
+  const driverPhone = labelData?.driverPhone || ''
+  
+  // 调试：打印packageSn的值
+  console.log('[Content] ========== 数据提取调试 ==========')
+  console.log('[Content] 📦 labelData?.packageSn (原始值):', labelData?.packageSn)
+  console.log('[Content] 📦 packageNo (提取后):', packageNo)
+  console.log('[Content] 📦 packageNo类型:', typeof packageNo)
+  console.log('[Content] 📦 packageNo长度:', packageNo?.length)
+  console.log('[Content] 📦 packageNo是否为空:', !packageNo)
+  console.log('[Content] 📦 labelData所有字段:', Object.keys(labelData || {}))
+  
+  if (!packageNo) {
+    console.error('[Content] ❌ 警告：packageNo为空，二维码和条形码将无法生成！')
+    console.error('[Content] ❌ 请检查数据中是否包含packageSn字段')
+  } else {
+    console.log('[Content] ✅ packageNo有值，将用于生成二维码和条形码')
+  }
+  console.log('[Content] =================================')
+  
+  const deliveryMethodCode = labelData?.deliveryMethod
+  let deliveryMethod = '自行配送'
+  if (deliveryMethodCode === 1) {
+    deliveryMethod = '自行配送'
+  } else if (deliveryMethodCode === 2) {
+    deliveryMethod = '自行委托第三方物流'
+  } else if (deliveryMethodCode === 3) {
+    deliveryMethod = '在线物流下单'
+  }
+  
+  // 产品规格
+  let productSpec = ''
+  if (labelData?.nonClothSecondarySpecVOList && Array.isArray(labelData.nonClothSecondarySpecVOList)) {
+    const specs = labelData.nonClothSecondarySpecVOList.map((spec: any) => spec.specName).filter(Boolean)
+    if (specs.length > 0) {
+      productSpec = specs.join('、')
+    }
+  }
+  
+  let productNameDisplay = productName
+  if (productSpec && productName.includes('【')) {
+    productNameDisplay = productName
+  } else if (productSpec) {
+    productNameDisplay = `${productName}【${productSpec}】`
+  }
+  
+  // 创建React根并渲染组件
+  const root = createRoot(container)
+  root.render(
+    React.createElement(PrintLabel, {
+      warehouse,
+      isJIT,
+      isUrgent,
+      shopName,
+      printTime,
+      productName: productNameDisplay,
+      skcId,
+      sku,
+      quantity,
+      packageNo,
+      packageIndex,
+      totalPackages,
+      deliveryMethod,
+      driverName: driverName || undefined,
+      driverPhone: driverPhone || undefined
+    })
+  )
+  
+  console.log('[Content] React组件已渲染到DOM，packageNo:', packageNo)
+  return root
+}
+
+/**
+ * 渲染打印标签内容（保留旧方法以兼容）
  * 根据接口返回的数据生成打印标签的HTML
  * @param data 接口返回的数据
  * @returns HTML字符串
@@ -1595,15 +2099,33 @@ function renderPrintLabel(data: any): string {
       // 生成二维码
       function generateQRCode() {
         const qrCodeContainer = document.getElementById('qrCode');
-        if (!qrCodeContainer || !packageSn) return;
+        if (!qrCodeContainer) {
+          console.error('二维码容器不存在');
+          return;
+        }
+        if (!packageSn) {
+          console.error('包裹号不存在，无法生成二维码');
+          qrCodeContainer.innerHTML = '<div style="font-size: 2mm; color: #999;">无数据</div>';
+          return;
+        }
+        
+        console.log('开始生成二维码，包裹号:', packageSn);
         
         // 等待QRCode库加载
         let retryCount = 0;
-        const maxRetries = 20;
+        const maxRetries = 50; // 增加重试次数
         
         function tryGenerateQR() {
           if (typeof QRCode !== 'undefined') {
-            QRCode.toCanvas(qrCodeContainer, packageSn, {
+            console.log('QRCode库已加载，开始生成二维码...');
+            // 先清空容器
+            qrCodeContainer.innerHTML = '';
+            
+            // 创建canvas元素
+            const canvas = document.createElement('canvas');
+            qrCodeContainer.appendChild(canvas);
+            
+            QRCode.toCanvas(canvas, packageSn, {
               width: 18 * 3.779527559, // 18mm转换为像素（1mm = 3.779527559px at 96dpi）
               margin: 1,
               color: {
@@ -1613,9 +2135,13 @@ function renderPrintLabel(data: any): string {
             }, function (error) {
               if (error) {
                 console.error('生成二维码失败:', error);
-                qrCodeContainer.innerHTML = '<div style="font-size: 2mm; color: #999;">QR</div>';
+                qrCodeContainer.innerHTML = '<div style="font-size: 2mm; color: #999;">QR错误</div>';
               } else {
-                console.log('二维码生成成功');
+                console.log('二维码生成成功，canvas尺寸:', canvas.width, 'x', canvas.height);
+                // 确保canvas可见
+                canvas.style.width = '100%';
+                canvas.style.height = '100%';
+                canvas.style.display = 'block';
                 // 通知二维码已生成
                 window.dispatchEvent(new CustomEvent('qrCodeGenerated'));
               }
@@ -1625,8 +2151,8 @@ function renderPrintLabel(data: any): string {
             if (retryCount < maxRetries) {
               setTimeout(tryGenerateQR, 100);
             } else {
-              console.error('QRCode库加载超时');
-              qrCodeContainer.innerHTML = '<div style="font-size: 2mm; color: #999;">QR</div>';
+              console.error('QRCode库加载超时，已重试', maxRetries, '次');
+              qrCodeContainer.innerHTML = '<div style="font-size: 2mm; color: #999;">QR超时</div>';
             }
           }
         }
@@ -1637,15 +2163,28 @@ function renderPrintLabel(data: any): string {
       // 生成条形码
       function generateBarcode() {
         const barcodeSvg = document.getElementById('barcode');
-        if (!barcodeSvg || !packageSn) return;
+        if (!barcodeSvg) {
+          console.error('条形码容器不存在');
+          return;
+        }
+        if (!packageSn) {
+          console.error('包裹号不存在，无法生成条形码');
+          return;
+        }
+        
+        console.log('开始生成条形码，包裹号:', packageSn);
         
         // 等待JsBarcode库加载
         let retryCount = 0;
-        const maxRetries = 20;
+        const maxRetries = 50; // 增加重试次数
         
         function tryGenerateBarcode() {
           if (typeof JsBarcode !== 'undefined') {
+            console.log('JsBarcode库已加载，开始生成条形码...');
             try {
+              // 清空SVG内容
+              barcodeSvg.innerHTML = '';
+              
               JsBarcode(barcodeSvg, packageSn, {
                 format: "CODE128",
                 width: 1.5,
@@ -1655,9 +2194,16 @@ function renderPrintLabel(data: any): string {
                 lineColor: "#000000",
                 margin: 2
               });
-              console.log('条形码生成成功');
-              // 通知条形码已生成
-              window.dispatchEvent(new CustomEvent('barcodeGenerated'));
+              
+              // 检查是否生成成功
+              const svgContent = barcodeSvg.innerHTML;
+              if (svgContent && svgContent.trim().length > 0) {
+                console.log('条形码生成成功，SVG内容长度:', svgContent.length);
+                // 通知条形码已生成
+                window.dispatchEvent(new CustomEvent('barcodeGenerated'));
+              } else {
+                console.error('条形码生成失败：SVG内容为空');
+              }
             } catch (error) {
               console.error('生成条形码失败:', error);
             }
@@ -1666,7 +2212,7 @@ function renderPrintLabel(data: any): string {
             if (retryCount < maxRetries) {
               setTimeout(tryGenerateBarcode, 100);
             } else {
-              console.error('JsBarcode库加载超时');
+              console.error('JsBarcode库加载超时，已重试', maxRetries, '次');
             }
           }
         }
@@ -2688,549 +3234,316 @@ async function clickWarehouseReceiptTab() {
     // 等待表格完全渲染
     await sleep(2000)
     
-    // ========== 第一部分：主动流程 - 依次触发各种点击事件 ==========
-    console.log('[Content] ========== 【主动流程】开始依次触发点击事件 ==========')
+    // ========== 只处理第一行，用于调试分析问题 ==========
+    console.log('[Content] ========== 【调试模式】只处理第一行，分析PDF为空的问题 ==========')
     
-    // 步骤1：点击全选checkbox
-    console.log('[Content] 【主动流程】步骤1：查找并点击全选checkbox')
-    const checkboxes = document.querySelectorAll('input[type="checkbox"]')
-    let selectAllCheckbox: HTMLElement | null = null
+    // 查找所有表格行
+    const tableRows = document.querySelectorAll('tr[data-testid="beast-core-table-body-tr"]')
     
-    // 查找全选checkbox（通常是表头的第一个checkbox）
-    for (const checkbox of Array.from(checkboxes)) {
-      const checkboxElement = checkbox as HTMLElement
-      // 检查是否在表头区域（thead）
-      const isInHeader = checkbox.closest('thead') !== null
-      if (isInHeader) {
-        selectAllCheckbox = checkboxElement
-        console.log('[Content] 【主动流程】找到全选checkbox')
+    if (tableRows.length === 0) {
+      console.warn('[Content] 未找到表格行数据')
+      return false
+    }
+    
+    console.log(`[Content] 找到 ${tableRows.length} 行数据，【调试模式】只处理第一行...`)
+    
+    // 只处理第一行
+    const row = tableRows[0] as HTMLElement
+    console.log(`[Content] ========== 处理第 1 行（调试模式） ==========`)
+    
+    // 在当前行中查找所有"打印商品打包标签"链接
+    const printLinks = row.querySelectorAll('a[data-testid="beast-core-button-link"]')
+    let firstPrintLink: HTMLElement | null = null
+    
+    // 遍历所有链接，找到第一个文本内容为"打印商品打包标签"的链接
+    for (const link of Array.from(printLinks)) {
+      const linkText = link.textContent?.trim() || ''
+      if (linkText === '打印商品打包标签') {
+        firstPrintLink = link as HTMLElement
+        console.log(`[Content] 第 1 行找到第一个"打印商品打包标签"链接`)
         break
       }
     }
     
-    if (!selectAllCheckbox) {
-      console.error('[Content] 【主动流程】未找到全选checkbox')
+    if (!firstPrintLink) {
+      console.warn(`[Content] 第 1 行未找到"打印商品打包标签"链接`)
       return false
     }
     
-    // 检查是否已选中，如果未选中则点击
-    const isChecked = (selectAllCheckbox as HTMLInputElement).checked
-    if (!isChecked) {
-      console.log('[Content] 【主动流程】点击全选checkbox...')
-      selectAllCheckbox.click()
-      console.log('[Content] 【主动流程】已点击全选checkbox')
-      await sleep(1000) // 等待选中状态更新
-    } else {
-      console.log('[Content] 【主动流程】表格已全选，跳过点击')
-    }
+    // 点击第一个"打印商品打包标签"链接
+    console.log(`[Content] 点击第 1 行的第一个"打印商品打包标签"...`)
+    firstPrintLink.click()
     
-    // 步骤2：处理全选后可能出现的弹窗
-    console.log('[Content] 【主动流程】步骤2：检查并处理全选后的弹窗')
-    await sleep(500) // 等待弹窗出现
-    const modalWrapperAfterSelect = document.querySelector('div[data-testid="beast-core-modal-innerWrapper"]')
-    if (modalWrapperAfterSelect) {
-      console.log('[Content] 【主动流程】检测到弹窗，查找确认按钮...')
-      const confirmButton = modalWrapperAfterSelect.querySelector('button[data-testid="beast-core-button"]') as HTMLElement
-      if (confirmButton) {
-        const buttonText = confirmButton.textContent?.trim() || ''
-        console.log(`[Content] 【主动流程】找到弹窗按钮: ${buttonText}`)
-        confirmButton.click()
-        console.log('[Content] 【主动流程】已点击弹窗确认按钮')
-        await sleep(1000) // 等待弹窗关闭
-      }
-    } else {
-      console.log('[Content] 【主动流程】未检测到弹窗，继续执行')
-    }
+    // 等待弹窗出现
+    console.log(`[Content] 等待弹窗出现...`)
+    await sleep(1000)
     
-    // 步骤3：查找并点击批量打印按钮
-    console.log('[Content] 【主动流程】步骤3：查找并点击批量打印按钮')
-    const buttons = document.querySelectorAll('button[data-testid="beast-core-button"]')
-    let batchPrintButton: HTMLElement | null = null
-    
-    // 遍历所有按钮，查找文本内容为"批量打印商品打包标签"的按钮
-    for (const button of Array.from(buttons)) {
-      const buttonText = button.textContent?.trim() || ''
-      if (buttonText === '批量打印商品打包标签') {
-        batchPrintButton = button as HTMLElement
-        console.log('[Content] 【主动流程】找到批量打印商品打包标签按钮')
-        break
-      }
-    }
-    
-    if (!batchPrintButton) {
-      console.error('[Content] 【主动流程】未找到批量打印商品打包标签按钮')
-      return false
-    }
-    
-    // 步骤4：点击批量打印按钮
-    console.log('[Content] 【主动流程】步骤4：点击批量打印按钮')
-    batchPrintButton.click()
-    console.log('[Content] 【主动流程】已点击批量打印商品打包标签按钮')
-    
-    // 步骤5：等待打印弹窗出现，并点击弹窗中的按钮
-    console.log('[Content] 【主动流程】步骤5：等待打印弹窗出现并点击按钮')
-    await sleep(1000) // 等待弹窗出现
-    const printModalWrapper = await findDom('div[data-testid="beast-core-modal-innerWrapper"]', {
+    const modalWrapper = await findDom('div[data-testid="beast-core-modal-innerWrapper"]', {
       timeout: 5000,
       interval: 200
     })
     
-    if (printModalWrapper) {
-      console.log('[Content] 【主动流程】打印弹窗已出现，查找弹窗中的按钮')
-      // 查找弹窗中的"继续打印"或其他按钮
-      const printModalButtons = printModalWrapper.querySelectorAll('button[data-testid="beast-core-button"]')
-      let continuePrintButton: HTMLElement | null = null
-      
-      for (const button of Array.from(printModalButtons)) {
-        const buttonText = button.textContent?.trim() || ''
-        console.log(`[Content] 【主动流程】检查弹窗按钮: ${buttonText}`)
-        // 查找"继续打印"或类似的按钮
-        if (buttonText.includes('继续') || buttonText.includes('打印') || buttonText.includes('确认')) {
-          continuePrintButton = button as HTMLElement
-          console.log(`[Content] 【主动流程】找到弹窗按钮: ${buttonText}`)
-          break
-        }
-      }
-      
-      if (continuePrintButton) {
-        console.log('[Content] 【主动流程】点击弹窗中的按钮...')
-        continuePrintButton.click()
-        console.log('[Content] 【主动流程】已点击弹窗中的按钮')
-      } else {
-        console.warn('[Content] 【主动流程】未找到弹窗中的按钮，继续执行')
-      }
-    } else {
-      console.warn('[Content] 【主动流程】未检测到打印弹窗，继续执行')
-    }
-    
-    console.log('[Content] ========== 【主动流程】所有点击操作已完成 ==========')
-    
-    // ========== 第二部分：被动监听流程 - 等待接口拦截器发送事件 ==========
-    console.log('[Content] ========== 【被动监听】开始设置接口拦截监听器 ==========')
-    
-    // 确保接口拦截器已设置（全局拦截器应该在页面加载时就已经设置）
-    if (!(window as any).__printAPIListenerSetup) {
-      console.warn('[Content] 【被动监听】警告：全局拦截器未设置，立即设置...')
-      await interceptPrintAPI()
-      await sleep(500) // 等待注入完成
-    } else {
-      console.log('[Content] 【被动监听】全局接口拦截器已就绪')
-    }
-    
-    // 创建Promise来等待批量打印接口数据
-    let printDataResolve: ((data: any) => void) | null = null
-    let printDataReject: ((error: Error) => void) | null = null
-    const printDataPromise = new Promise<any>((resolve, reject) => {
-      printDataResolve = resolve
-      printDataReject = reject
-    })
-    
-    // 设置临时标记，用于识别本次批量打印接口
-    const tempMarkerId = `batch_print_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-    ;(window as any).__waitingForBatchPrintData = tempMarkerId
-    
-    // 设置postMessage监听器，被动接收来自注入脚本的打印接口数据
-    const messageHandler = async (event: MessageEvent) => {
-      // 验证消息来源，确保来自注入脚本
-      if (event.data && event.data.type === 'PRINT_API_RESPONSE' && event.data.source === 'injected-script') {
-        const printData = event.data.data
-        const url = printData.url || ''
-        
-        // 检查是否是批量打印接口（printBoxMarks）
-        if (url.includes('printBoxMarks')) {
-          console.log(`[Content] 【被动监听】✅ 检测到批量打印标签接口调用: ${url}`)
-          
-          // 检查是否正在等待批量打印数据（通过标记ID匹配）
-          if ((window as any).__waitingForBatchPrintData === tempMarkerId) {
-            // 移除监听器
-            window.removeEventListener('message', messageHandler)
-            
-            // 清除等待标记
-            ;(window as any).__waitingForBatchPrintData = null
-            
-            try {
-              // ========== 打印拦截到的完整接口数据 ==========
-              console.log('========================================')
-              console.log('[Content] 【被动监听】🎯 ========== 拦截到打印接口数据 ==========')
-              console.log('========================================')
-              
-              // 打印原始数据对象
-              console.log('[Content] 【被动监听】📋 原始 printData 对象:', printData)
-              console.log('[Content] 【被动监听】📋 接口URL:', url)
-              console.log('[Content] 【被动监听】📋 时间戳:', printData.timestamp)
-              
-              let data = printData.data
-              
-              // 打印原始数据类型
-              console.log('[Content] 【被动监听】📋 原始数据类型:', typeof data)
-              console.log('[Content] 【被动监听】📋 原始数据长度:', typeof data === 'string' ? data.length : 'N/A')
-              
-              // 如果数据是字符串，尝试解析JSON
-              if (typeof data === 'string') {
-                console.log('[Content] 【被动监听】📋 原始字符串数据（完整）:')
-                console.log(data)
-                
-                try {
-                  data = JSON.parse(data)
-                  console.log('[Content] 【被动监听】📋 解析后的JSON数据:')
-                  console.log(JSON.stringify(data, null, 2))
-                  console.log('[Content] 【被动监听】📋 JSON数据类型:', typeof data)
-                  console.log('[Content] 【被动监听】📋 JSON数据键名:', data && typeof data === 'object' ? Object.keys(data) : 'N/A')
-                } catch (parseError) {
-                  console.log('[Content] 【被动监听】📋 数据不是有效的JSON格式')
-                  console.log('[Content] 【被动监听】📋 解析错误:', parseError)
-                }
-              } else {
-                console.log('[Content] 【被动监听】📋 数据（非字符串）:')
-                console.log(data)
-                console.log('[Content] 【被动监听】📋 数据类型:', typeof data)
-                if (data && typeof data === 'object') {
-                  console.log('[Content] 【被动监听】📋 数据键名:', Object.keys(data))
-                  console.log('[Content] 【被动监听】📋 数据字符串化:')
-                  console.log(JSON.stringify(data, null, 2))
-                }
-              }
-              
-              console.log('========================================')
-              console.log('[Content] 【被动监听】✅ ========== 数据打印完成 ==========')
-              console.log('========================================')
-              
-              // 保存数据到background
-              try {
-                console.log('[Content] 【被动监听】📦 保存打印数据到background...')
-                await chrome.runtime.sendMessage({
-                  type: 'SAVE_BATCH_PRINT_DATA',
-                  data: {
-                    printData: data,
-                    timestamp: Date.now()
-                  }
-                })
-                console.log('[Content] 【被动监听】✅ 打印数据已保存到background')
-              } catch (error: any) {
-                console.error('[Content] 【被动监听】❌ 保存打印数据到background失败:', error)
-              }
-              
-              // ========== 开始渲染并生成PDF ==========
-              console.log('[Content] 【被动监听】🎨 ========== 开始渲染打印标签并生成PDF ==========')
-              
-              try {
-                // 解析打印数据
-                let printDataToRender = data
-                
-                // 如果数据有result字段且是数组，遍历每个标签数据并生成PDF
-                if (printDataToRender && printDataToRender.result && Array.isArray(printDataToRender.result)) {
-                  console.log(`[Content] 【被动监听】📋 找到 ${printDataToRender.result.length} 个打印标签数据`)
-                  
-                  // 遍历每个标签数据，生成PDF
-                  for (let i = 0; i < printDataToRender.result.length; i++) {
-                    const labelData = printDataToRender.result[i]
-                    
-                    // 提取备货单号作为文件名
-                    const stockOrderNo = labelData.subPurchaseOrderSn || labelData.deliveryOrderSn || `打印标签_${Date.now()}_${i}`
-                    const fileName = `${stockOrderNo}`
-                    
-                    console.log(`[Content] 【被动监听】🎨 开始渲染第 ${i + 1}/${printDataToRender.result.length} 个标签: ${fileName}`)
-                    
-                    // 渲染打印标签HTML（只渲染单个标签数据）
-                    const printLabelHTML = renderPrintLabel({ result: [labelData] })
-                    
-                    // 创建隐藏的iframe来渲染打印标签（100x100mm）
-                    const iframe = document.createElement('iframe')
-                    iframe.style.position = 'fixed'
-                    iframe.style.top = '-9999px'
-                    iframe.style.left = '-9999px'
-                    iframe.style.width = '100mm'
-                    iframe.style.height = '100mm'
-                    iframe.style.border = 'none'
-                    document.body.appendChild(iframe)
-                    
-                    // 等待iframe加载
-                    await new Promise<void>((resolve) => {
-                      iframe.onload = () => resolve()
-                      iframe.contentDocument!.open()
-                      iframe.contentDocument!.write(printLabelHTML)
-                      iframe.contentDocument!.close()
-                    })
-                    
-                    // 等待内容渲染和二维码、条形码生成
-                    await sleep(2000)
-                    
-                    // 等待二维码和条形码生成完成
-                    const iframeWindow = iframe.contentWindow
-                    if (iframeWindow) {
-                      // 创建Promise等待二维码和条形码生成事件
-                      const waitForQRCode = new Promise<void>((resolve) => {
-                        iframeWindow.addEventListener('qrCodeGenerated', () => {
-                          console.log('[Content] 【被动监听】✅ 二维码已生成')
-                          resolve()
-                        }, { once: true })
-                        // 超时检查
-                        setTimeout(() => {
-                          const qrCodeElement = iframe.contentDocument?.getElementById('qrCode')
-                          if (qrCodeElement && qrCodeElement.querySelector('canvas')) {
-                            console.log('[Content] 【被动监听】✅ 二维码已生成（通过检查）')
-                            resolve()
-                          } else {
-                            console.warn('[Content] 【被动监听】⚠️ 二维码生成超时，继续执行')
-                            resolve()
-                          }
-                        }, 5000)
-                      })
-                      
-                      const waitForBarcode = new Promise<void>((resolve) => {
-                        iframeWindow.addEventListener('barcodeGenerated', () => {
-                          console.log('[Content] 【被动监听】✅ 条形码已生成')
-                          resolve()
-                        }, { once: true })
-                        // 超时检查
-                        setTimeout(() => {
-                          const barcodeElement = iframe.contentDocument?.getElementById('barcode')
-                          if (barcodeElement && barcodeElement.querySelector('svg')) {
-                            console.log('[Content] 【被动监听】✅ 条形码已生成（通过检查）')
-                            resolve()
-                          } else {
-                            console.warn('[Content] 【被动监听】⚠️ 条形码生成超时，继续执行')
-                            resolve()
-                          }
-                        }, 5000)
-                      })
-                      
-                      // 等待二维码和条形码都生成完成
-                      await Promise.all([waitForQRCode, waitForBarcode])
-                      
-                      // 额外等待500ms确保渲染完成
-                      await sleep(500)
-                    } else {
-                      // 如果无法访问iframe window，使用传统方式等待
-                      await sleep(3000)
-                      console.warn('[Content] 【被动监听】⚠️ 无法访问iframe window，使用传统等待方式')
-                    }
-                    
-                    // 从iframe中生成PDF
-                    const iframeBody = iframe.contentDocument?.body
-                    if (iframeBody) {
-                      const pdfFileName = `${fileName}.pdf`
-                      await generatePDF(iframeBody, pdfFileName)
-                      console.log(`[Content] 【被动监听】✅ PDF 已生成并下载: ${pdfFileName}`)
-                    } else {
-                      console.error(`[Content] 【被动监听】❌ 无法获取iframe body`)
-                    }
-                    
-                    // 移除iframe
-                    document.body.removeChild(iframe)
-                    
-                    // 等待一段时间再处理下一个（避免浏览器下载冲突）
-                    if (i < printDataToRender.result.length - 1) {
-                      await sleep(1000)
-                    }
-                  }
-                  
-                  console.log('[Content] 【被动监听】✅ ========== 所有PDF生成完成 ==========')
-                } else if (printDataToRender && Array.isArray(printDataToRender)) {
-                  // 如果数据本身就是数组
-                  console.log(`[Content] 【被动监听】📋 数据是数组，找到 ${printDataToRender.length} 个打印标签数据`)
-                  
-                  for (let i = 0; i < printDataToRender.length; i++) {
-                    const labelData = printDataToRender[i]
-                    const stockOrderNo = labelData.subPurchaseOrderSn || labelData.deliveryOrderSn || `打印标签_${Date.now()}_${i}`
-                    const fileName = `${stockOrderNo}`
-                    
-                    console.log(`[Content] 【被动监听】🎨 开始渲染第 ${i + 1}/${printDataToRender.length} 个标签: ${fileName}`)
-                    
-                    const printLabelHTML = renderPrintLabel({ result: [labelData] })
-                    
-                    const iframe = document.createElement('iframe')
-                    iframe.style.position = 'fixed'
-                    iframe.style.top = '-9999px'
-                    iframe.style.left = '-9999px'
-                    iframe.style.width = '100mm'
-                    iframe.style.height = '100mm'
-                    iframe.style.border = 'none'
-                    document.body.appendChild(iframe)
-                    
-                    await new Promise<void>((resolve) => {
-                      iframe.onload = () => resolve()
-                      iframe.contentDocument!.open()
-                      iframe.contentDocument!.write(printLabelHTML)
-                      iframe.contentDocument!.close()
-                    })
-                    
-                    // 等待内容渲染和二维码、条形码生成
-                    await sleep(2000)
-                    
-                    // 等待二维码和条形码生成完成
-                    const iframeWindow = iframe.contentWindow
-                    if (iframeWindow) {
-                      const waitForQRCode = new Promise<void>((resolve) => {
-                        iframeWindow.addEventListener('qrCodeGenerated', () => resolve(), { once: true })
-                        setTimeout(() => {
-                          const qrCodeElement = iframe.contentDocument?.getElementById('qrCode')
-                          if (qrCodeElement && qrCodeElement.querySelector('canvas')) {
-                            resolve()
-                          } else {
-                            resolve()
-                          }
-                        }, 5000)
-                      })
-                      
-                      const waitForBarcode = new Promise<void>((resolve) => {
-                        iframeWindow.addEventListener('barcodeGenerated', () => resolve(), { once: true })
-                        setTimeout(() => {
-                          const barcodeElement = iframe.contentDocument?.getElementById('barcode')
-                          if (barcodeElement && barcodeElement.querySelector('svg')) {
-                            resolve()
-                          } else {
-                            resolve()
-                          }
-                        }, 5000)
-                      })
-                      
-                      await Promise.all([waitForQRCode, waitForBarcode])
-                      await sleep(500)
-                    } else {
-                      await sleep(3000)
-                    }
-                    
-                    const iframeBody = iframe.contentDocument?.body
-                    if (iframeBody) {
-                      const pdfFileName = `${fileName}.pdf`
-                      await generatePDF(iframeBody, pdfFileName)
-                      console.log(`[Content] 【被动监听】✅ PDF 已生成并下载: ${pdfFileName}`)
-                    }
-                    
-                    document.body.removeChild(iframe)
-                    
-                    if (i < printDataToRender.length - 1) {
-                      await sleep(1000)
-                    }
-                  }
-                  
-                  console.log('[Content] 【被动监听】✅ ========== 所有PDF生成完成 ==========')
-                } else {
-                  // 单个标签数据
-                  console.log('[Content] 【被动监听】📋 处理单个打印标签数据')
-                  
-                  const stockOrderNo = printDataToRender?.subPurchaseOrderSn || printDataToRender?.deliveryOrderSn || `打印标签_${Date.now()}`
-                  const fileName = `${stockOrderNo}`
-                  
-                  const printLabelHTML = renderPrintLabel(printDataToRender)
-                  
-                  const iframe = document.createElement('iframe')
-                  iframe.style.position = 'fixed'
-                  iframe.style.top = '-9999px'
-                  iframe.style.left = '-9999px'
-                  iframe.style.width = '100mm'
-                  iframe.style.height = '100mm'
-                  iframe.style.border = 'none'
-                  document.body.appendChild(iframe)
-                  
-                  await new Promise<void>((resolve) => {
-                    iframe.onload = () => resolve()
-                    iframe.contentDocument!.open()
-                    iframe.contentDocument!.write(printLabelHTML)
-                    iframe.contentDocument!.close()
-                  })
-                  
-                  // 等待内容渲染和二维码生成
-                  await sleep(3000)
-                  
-                  // 检查二维码是否已生成
-                  const qrCodeElement = iframe.contentDocument?.getElementById('qrCode')
-                  if (qrCodeElement) {
-                    let retryCount = 0
-                    while (retryCount < 10 && !qrCodeElement.querySelector('canvas')) {
-                      await sleep(500)
-                      retryCount++
-                    }
-                  }
-                  
-                  const iframeBody = iframe.contentDocument?.body
-                  if (iframeBody) {
-                    const pdfFileName = `${fileName}.pdf`
-                    await generatePDF(iframeBody, pdfFileName)
-                    console.log(`[Content] 【被动监听】✅ PDF 已生成并下载: ${pdfFileName}`)
-                  }
-                  
-                  document.body.removeChild(iframe)
-                  console.log('[Content] 【被动监听】✅ ========== PDF生成完成 ==========')
-                }
-              } catch (renderError: any) {
-                console.error('[Content] 【被动监听】❌ 渲染并生成PDF时发生错误:', renderError)
-                console.error('[Content] 【被动监听】❌ 错误详情:', renderError.message)
-                console.error('[Content] 【被动监听】❌ 错误堆栈:', renderError.stack)
-              }
-              
-              // 解析数据并resolve Promise
-              if (printDataResolve) {
-                printDataResolve(data)
-              }
-              
-              console.log('[Content] 【被动监听】✅ 所有操作已完成，不会刷新页面')
-              
-            } catch (error: any) {
-              console.error(`[Content] 【被动监听】❌ 处理批量打印接口数据失败:`, error)
-              console.error(`[Content] 【被动监听】❌ 错误详情:`, error.message)
-              console.error(`[Content] 【被动监听】❌ 错误堆栈:`, error.stack)
-              if (printDataReject) {
-                printDataReject(error)
-              }
-            }
-          }
-        }
-      }
-    }
-    
-    // 添加postMessage监听器（被动监听）
-    window.addEventListener('message', messageHandler)
-    console.log('[Content] 【被动监听】postMessage监听器已设置，等待接口拦截器发送事件...')
-    
-    // 设置超时（15秒后清理）
-    const timeoutId = setTimeout(() => {
-      if ((window as any).__waitingForBatchPrintData === tempMarkerId) {
-        ;(window as any).__waitingForBatchPrintData = null
-        window.removeEventListener('message', messageHandler)
-        if (printDataReject) {
-          printDataReject(new Error('等待批量打印接口数据超时'))
-        }
-      }
-    }, 15000)
-    
-    // 等待接口拦截器被动发送的数据（最多15秒）
-    console.log('[Content] 【被动监听】等待接口拦截器发送打印接口数据...')
-    console.log('[Content] 【被动监听】📋 接收到数据后将自动渲染并生成PDF下载，不会刷新页面')
-    
-    try {
-      // 注意：由于在 messageHandler 中不 resolve Promise，这里会一直等待
-      // 数据会在 messageHandler 中打印，然后暂停
-      const printData = await Promise.race([
-        printDataPromise,
-        new Promise((_, reject) => setTimeout(() => reject(new Error('超时')), 15000))
-      ]) as any
-      
-      // 清理超时定时器和监听器
-      clearTimeout(timeoutId)
-      window.removeEventListener('message', messageHandler)
-      
-      console.log('[Content] 【被动监听】✅ 成功接收到批量打印接口数据')
-      
-      // ========== PDF已生成，不刷新页面 ==========
-      console.log('[Content] 【被动监听】✅ PDF文件已生成并下载完成')
-      console.log('[Content] 【被动监听】📋 所有打印标签已处理完成，不会刷新页面')
-      
-      // 不刷新页面，保持当前页面状态
-      // PDF文件已在 messageHandler 中生成并下载
-      
-      return true
-    } catch (error: any) {
-      // 清理超时定时器和监听器
-      clearTimeout(timeoutId)
-      window.removeEventListener('message', messageHandler)
-      ;(window as any).__waitingForBatchPrintData = null
-      
-      console.error('[Content] 【被动监听】❌ 获取批量打印接口数据失败:', error)
-      console.error('[Content] 【被动监听】❌ 错误详情:', error.message)
+    if (!modalWrapper) {
+      console.warn(`[Content] 点击后未出现弹窗`)
       return false
     }
+    
+    console.log(`[Content] 弹窗已出现`)
+    
+    // 查找弹窗中的第一个按钮（不对比文案）
+    const modalButtons = modalWrapper.querySelectorAll('button[data-testid="beast-core-button"]')
+    
+    if (modalButtons.length === 0) {
+      console.warn(`[Content] 弹窗中未找到按钮`)
+      return false
+    }
+    
+    // 点击第一个按钮
+    const firstButton = modalButtons[0] as HTMLElement
+    const buttonText = firstButton.textContent?.trim() || ''
+    console.log(`[Content] 找到弹窗第一个按钮，文案: "${buttonText}"，准备点击...`)
+    firstButton.click()
+    console.log(`[Content] 已点击弹窗第一个按钮`)
+    
+    // 等待打印弹窗出现，并查找iframe
+    console.log(`[Content] 等待打印弹窗出现，查找iframe...`)
+    
+    // 使用轮询方式查找iframe，最多等待10秒
+    let iprintIframe: HTMLIFrameElement | null = null
+    const maxWaitTime = 10000 // 10秒
+    const checkInterval = 200 // 每200ms检查一次
+    const startTime = Date.now()
+    
+    while (Date.now() - startTime < maxWaitTime) {
+      iprintIframe = document.querySelector('iframe.iprint') as HTMLIFrameElement
+      if (iprintIframe) {
+        console.log(`[Content] ✅ 找到iprint iframe（耗时: ${Date.now() - startTime}ms）`)
+        break
+      }
+      await sleep(checkInterval)
+    }
+    
+    if (!iprintIframe) {
+      console.error(`[Content] ❌ 等待${maxWaitTime}ms后仍未找到iprint iframe`)
+      console.log(`[Content] 当前页面所有iframe:`, document.querySelectorAll('iframe').length)
+      return false
+    }
+    
+    console.log(`[Content] ========== iframe初始信息 ==========`)
+    console.log(`[Content] iframe src:`, iprintIframe.src)
+    console.log(`[Content] iframe style.display:`, iprintIframe.style.display)
+    console.log(`[Content] iframe style.visibility:`, iprintIframe.style.visibility)
+    console.log(`[Content] iframe style.opacity:`, iprintIframe.style.opacity)
+    console.log(`[Content] iframe className:`, iprintIframe.className)
+    console.log(`[Content] iframe width:`, iprintIframe.width)
+    console.log(`[Content] iframe height:`, iprintIframe.height)
+    
+    // 【关键步骤1】先显示iframe（移除隐藏样式），这样blob内容才能正确渲染
+    console.log(`[Content] ========== 步骤1：显示iframe（移除隐藏样式） ==========`)
+    iprintIframe.style.display = 'block'
+    iprintIframe.style.visibility = 'visible'
+    iprintIframe.style.opacity = '1'
+    iprintIframe.style.width = '100%'
+    iprintIframe.style.height = '800px'
+    iprintIframe.style.position = 'absolute'
+    iprintIframe.style.top = '0'
+    iprintIframe.style.left = '0'
+    iprintIframe.style.zIndex = '9999'
+    // 移除可能存在的隐藏类或样式
+    iprintIframe.classList.remove('hidden')
+    iprintIframe.classList.remove('hide')
+    console.log(`[Content] ✅ iframe已显示，样式已更新`)
+    console.log(`[Content] 更新后 iframe style.display:`, iprintIframe.style.display)
+    
+    // 【关键步骤2】等待iframe的load事件（blob URL加载）
+    console.log(`[Content] ========== 步骤2：等待iframe load事件（blob URL加载） ==========`)
+    await new Promise<void>((resolve) => {
+      // 检查是否已经加载完成
+      const checkReady = () => {
+        try {
+          const doc = iprintIframe!.contentDocument || iprintIframe!.contentWindow?.document
+          if (doc && doc.readyState === 'complete') {
+            console.log(`[Content] ✅ iframe document已加载完成（readyState: complete）`)
+            resolve()
+            return true
+          }
+        } catch (e) {
+          // 跨域或其他错误，继续等待onload
+        }
+        return false
+      }
+      
+      if (checkReady()) {
+        return
+      }
+      
+      // 监听load事件
+      iprintIframe!.onload = () => {
+        console.log(`[Content] ✅ iframe onload事件触发`)
+        // 再等待一小段时间确保内容渲染
+        setTimeout(() => {
+          resolve()
+        }, 500)
+      }
+      
+      // 设置超时，最多等待8秒
+      setTimeout(() => {
+        console.log(`[Content] ⚠️ iframe load事件超时（8秒），继续执行`)
+        resolve()
+      }, 8000)
+    })
+    
+    // 【关键步骤3】等待iframe内部文档完全加载和渲染
+    console.log(`[Content] ========== 步骤3：等待iframe内部文档完全加载和渲染 ==========`)
+    let iframeDocument: Document | null = null
+    let retryCount = 0
+    const maxRetries = 10
+    
+    while (retryCount < maxRetries) {
+      try {
+        iframeDocument = iprintIframe.contentDocument || iprintIframe.contentWindow?.document || null
+        
+        if (iframeDocument) {
+          console.log(`[Content] ✅ 成功获取iframe document（尝试 ${retryCount + 1}/${maxRetries}）`)
+          console.log(`[Content] iframe document.readyState:`, iframeDocument.readyState)
+          
+          // 检查readyState
+          if (iframeDocument.readyState === 'complete') {
+            console.log(`[Content] ✅ iframe document readyState 为 complete`)
+            
+            // 检查body是否存在
+            if (iframeDocument.body) {
+              console.log(`[Content] ✅ iframe body存在`)
+              
+              // 等待body内容渲染
+              const bodyContentLength = iframeDocument.body.innerHTML.length
+              const bodyTextLength = iframeDocument.body.textContent?.length || 0
+              const bodyChildrenCount = iframeDocument.body.children.length
+              
+              console.log(`[Content] iframe body.innerHTML长度:`, bodyContentLength)
+              console.log(`[Content] iframe body.textContent长度:`, bodyTextLength)
+              console.log(`[Content] iframe body子元素数量:`, bodyChildrenCount)
+              
+              // 如果内容足够，认为已渲染完成
+              if (bodyContentLength > 100 || bodyChildrenCount > 0) {
+                console.log(`[Content] ✅ iframe内容已渲染（内容长度: ${bodyContentLength}）`)
+                break
+              } else {
+                console.log(`[Content] ⚠️ iframe内容可能未完全渲染，等待中...`)
+              }
+            } else {
+              console.log(`[Content] ⚠️ iframe body不存在，等待中...`)
+            }
+          } else {
+            console.log(`[Content] ⚠️ iframe document readyState 为 ${iframeDocument.readyState}，等待中...`)
+          }
+        }
+      } catch (error: any) {
+        console.log(`[Content] ⚠️ 获取iframe document失败（尝试 ${retryCount + 1}/${maxRetries}）:`, error.message)
+      }
+      
+      retryCount++
+      if (retryCount < maxRetries) {
+        await sleep(1000) // 等待1秒后重试
+      }
+    }
+    
+    // 【关键步骤4】额外等待，确保所有资源（图片、样式等）加载完成
+    console.log(`[Content] ========== 步骤4：等待iframe内部资源完全加载 ==========`)
+    if (iframeDocument && iframeDocument.body) {
+      // 等待所有图片加载完成
+      const images = iframeDocument.body.querySelectorAll('img')
+      console.log(`[Content] 找到 ${images.length} 个图片，等待加载完成...`)
+      
+      if (images.length > 0) {
+        await Promise.all(
+          Array.from(images).map((img) => {
+            return new Promise<void>((resolve) => {
+              if (img.complete) {
+                resolve()
+              } else {
+                img.onload = () => resolve()
+                img.onerror = () => resolve() // 即使失败也继续
+                setTimeout(() => resolve(), 5000) // 5秒超时
+              }
+            })
+          })
+        )
+        console.log(`[Content] ✅ 所有图片加载完成`)
+      }
+      
+      // 额外等待2秒，确保样式和布局完全渲染
+      console.log(`[Content] 额外等待2秒，确保样式和布局完全渲染...`)
+      await sleep(2000)
+    }
+    
+    // 【关键步骤5】最终检查并生成PDF
+    console.log(`[Content] ========== 步骤5：最终检查iframe内容并生成PDF ==========`)
+    
+    if (!iframeDocument) {
+      console.error(`[Content] ❌ 无法获取iframe的document对象`)
+      console.log(`[Content] 可能原因：跨域限制或iframe未完全加载`)
+      return false
+    }
+    
+    if (!iframeDocument.body) {
+      console.error(`[Content] ❌ iframe document.body不存在`)
+      return false
+    }
+    
+    // 最终检查内容
+    console.log(`[Content] ========== 最终检查iframe内容 ==========`)
+    console.log(`[Content] iframe document.readyState:`, iframeDocument.readyState)
+    console.log(`[Content] iframe body.innerHTML长度:`, iframeDocument.body.innerHTML.length)
+    console.log(`[Content] iframe body.textContent长度:`, iframeDocument.body.textContent?.length || 0)
+    console.log(`[Content] iframe body子元素数量:`, iframeDocument.body.children.length)
+    
+    // 打印前1000个字符用于调试
+    if (iframeDocument.body.innerHTML.length > 0) {
+      console.log(`[Content] iframe body.innerHTML前1000字符:`, iframeDocument.body.innerHTML.substring(0, 1000))
+    }
+    
+    // 检查是否有可见内容
+    const hasVisibleContent = iframeDocument.body.children.length > 0 || 
+                              (iframeDocument.body.textContent && iframeDocument.body.textContent.trim().length > 0) ||
+                              iframeDocument.body.innerHTML.length > 100
+    
+    if (!hasVisibleContent) {
+      console.error(`[Content] ❌ iframe内容为空或未完全渲染`)
+      console.log(`[Content] 内容统计:`)
+      console.log(`  - innerHTML长度: ${iframeDocument.body.innerHTML.length}`)
+      console.log(`  - textContent长度: ${iframeDocument.body.textContent?.length || 0}`)
+      console.log(`  - 子元素数量: ${iframeDocument.body.children.length}`)
+      console.log(`[Content] 【调试模式】保留iframe，请手动检查iframe内容`)
+      return false
+    }
+    
+    // 从当前行提取备货单号作为文件名
+    const stockOrderNo = extractStockOrderNoFromRow(row)
+    const fileName = stockOrderNo || `打印标签_${Date.now()}_调试`
+    
+    console.log(`[Content] ========== 开始生成PDF ==========`)
+    console.log(`[Content] 文件名: ${fileName}.pdf`)
+    console.log(`[Content] 内容长度: ${iframeDocument.body.innerHTML.length} 字符`)
+    
+    try {
+      // 生成PDF
+      await generatePDF(iframeDocument.body, fileName)
+      console.log(`[Content] ✅ PDF生成完成: ${fileName}.pdf`)
+      
+      // 【调试模式】不销毁iframe，保留用于检查
+      console.log(`[Content] 【调试模式】保留iframe，不销毁，请检查iframe内容和生成的PDF`)
+      
+    } catch (error: any) {
+      console.error(`[Content] ❌ 生成PDF时发生错误:`, error)
+      console.error(`[Content] 错误详情:`, error.message)
+      console.error(`[Content] 错误堆栈:`, error.stack)
+      console.log(`[Content] 【调试模式】保留iframe，请检查错误原因`)
+      return false
+    }
+    
+    console.log('[Content] ========== 【调试模式】第一行处理完成 ==========')
+    return true
   } catch (error: any) {
     console.error('[Content] 点击待仓库收货标签时发生错误:', error)
     return false
@@ -3547,43 +3860,8 @@ async function clickWarehouseReceiptTab() {
           
           console.log(`[Content] 获取到打印接口数据，开始渲染...`)
           
-          // 渲染打印标签HTML
-          const printLabelHTML = renderPrintLabel(printData)
-          console.log(`[Content] 打印标签HTML已生成`)
-          
-          // 创建隐藏的iframe来渲染打印标签
-          const iframe = document.createElement('iframe')
-          iframe.style.position = 'fixed'
-          iframe.style.top = '-9999px'
-          iframe.style.left = '-9999px'
-          iframe.style.width = '210mm'
-          iframe.style.height = '297mm'
-          iframe.style.border = 'none'
-          document.body.appendChild(iframe)
-          
-          // 等待iframe加载
-          await new Promise<void>((resolve) => {
-            iframe.onload = () => resolve()
-            iframe.contentDocument!.open()
-            iframe.contentDocument!.write(printLabelHTML)
-            iframe.contentDocument!.close()
-          })
-          
-          // 等待内容渲染
-          await sleep(2000)
-          
-          // 从iframe中生成PDF
-          const iframeBody = iframe.contentDocument?.body
-          if (iframeBody) {
-            const pdfFileName = `${fileName}.pdf`
-            await generatePDF(iframeBody, pdfFileName)
-            console.log(`[Content] PDF 已生成: ${pdfFileName}`)
-          } else {
-            throw new Error('无法获取iframe body')
-          }
-          
-          // 移除iframe
-          document.body.removeChild(iframe)
+          // 使用React组件渲染并生成PDF（统一方法，不使用iframe）
+          await renderPrintLabelAndGeneratePDF(printData, fileName)
           
         } catch (error: any) {
           console.error(`[Content] 处理打印接口数据时发生错误:`, error)
@@ -4652,44 +4930,10 @@ async function checkAndRenderBatchPrintData() {
         
         console.log(`[Content] 开始渲染第 ${i + 1}/${printData.result.length} 个标签: ${fileName}`)
         
-        // 渲染打印标签HTML（只渲染单个标签数据）
-        const printLabelHTML = renderPrintLabel({ result: [labelData] })
+        // 使用React组件渲染并生成PDF（统一方法，不使用iframe）
+        await renderPrintLabelAndGeneratePDF({ result: [labelData] }, fileName)
         
-        // 创建隐藏的iframe来渲染打印标签
-        const iframe = document.createElement('iframe')
-        iframe.style.position = 'fixed'
-        iframe.style.top = '-9999px'
-        iframe.style.left = '-9999px'
-        iframe.style.width = '210mm'
-        iframe.style.height = '297mm'
-        iframe.style.border = 'none'
-        document.body.appendChild(iframe)
-        
-        // 等待iframe加载
-        await new Promise<void>((resolve) => {
-          iframe.onload = () => resolve()
-          iframe.contentDocument!.open()
-          iframe.contentDocument!.write(printLabelHTML)
-          iframe.contentDocument!.close()
-        })
-        
-        // 等待内容渲染
-        await sleep(2000)
-        
-        // 从iframe中生成PDF
-        const iframeBody = iframe.contentDocument?.body
-        if (iframeBody) {
-          const pdfFileName = `${fileName}.pdf`
-          await generatePDF(iframeBody, pdfFileName)
-          console.log(`[Content] PDF 已生成: ${pdfFileName}`)
-        } else {
-          console.error(`[Content] 无法获取iframe body`)
-        }
-        
-        // 移除iframe
-        document.body.removeChild(iframe)
-        
-        // 等待一段时间再处理下一个
+        // 等待一段时间再处理下一个（避免浏览器下载冲突）
         await sleep(1000)
       }
       
