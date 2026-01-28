@@ -43,8 +43,7 @@
     "name": "自动发货插件",
     "description": "自动发货插件 - 批量自动发货工具",
     "host_permissions": [
-      "http://*/*",
-      "https://*/*"
+      "https://seller.kuajingmaihuo.com/*"
     ],
     "permissions": [
       "tabs",

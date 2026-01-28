@@ -229,6 +229,32 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true // 保持消息通道开放以支持异步响应
   }
 
+  // 处理开始批量下载的请求
+  if (message.type === "START_BATCH_DOWNLOAD") {
+    handleStartBatchDownload(sender.tab?.id, message.data)
+      .then((result) => {
+        sendResponse({ success: true, data: result })
+      })
+      .catch((error) => {
+        console.error("[Background] 开始批量下载错误:", error)
+        sendResponse({ success: false, error: error.message })
+      })
+    return true // 保持消息通道开放以支持异步响应
+  }
+
+  // 处理处理下一行的请求
+  if (message.type === "PROCESS_NEXT_ROW") {
+    handleProcessNextRow(sender.tab?.id, message.data)
+      .then((result) => {
+        sendResponse({ success: true, data: result })
+      })
+      .catch((error) => {
+        console.error("[Background] 处理下一行错误:", error)
+        sendResponse({ success: false, error: error.message })
+      })
+    return true // 保持消息通道开放以支持异步响应
+  }
+
   return false
 })
 
@@ -257,7 +283,7 @@ async function handleSaveConfigAndOpenUrl(data: {
       type: "normal",
       focused: true,
       width: 1200, // 窗口宽度
-      height: 800  // 窗口高度
+      height: 800 // 窗口高度
     })
 
     // 获取新窗口中的标签页ID
@@ -270,57 +296,65 @@ async function handleSaveConfigAndOpenUrl(data: {
 
     // 监听标签页更新事件，等待页面加载完成
     // 当页面加载完成时，向content script发送消息
-    chrome.tabs.onUpdated.addListener(function listener(tabId, changeInfo, tab) {
-      // 检查是否是目标标签页
-      if (tabId !== newTabId) {
-        return
-      }
+    chrome.tabs.onUpdated.addListener(
+      function listener(tabId, changeInfo, tab) {
+        // 检查是否是目标标签页
+        if (tabId !== newTabId) {
+          return
+        }
 
-      // 当页面加载完成时，直接发送消息
-      if (changeInfo.status === 'complete') {
-        console.log(`[Background] 检测到页面加载完成，标签页ID: ${tabId}, URL: ${tab.url}`)
+        // 当页面加载完成时，直接发送消息
+        if (changeInfo.status === "complete") {
+          console.log(
+            `[Background] 检测到页面加载完成，标签页ID: ${tabId}, URL: ${tab.url}`
+          )
 
-        // 移除监听器，避免重复执行
-        chrome.tabs.onUpdated.removeListener(listener)
+          // 移除监听器，避免重复执行
+          chrome.tabs.onUpdated.removeListener(listener)
 
-        // 等待3秒后，向content script发送消息，通知开始执行批量任务
-        setTimeout(async () => {
-          try {
-            console.log('[Background] 等待3秒后，通知content script开始执行批量任务')
+          // 等待3秒后，向content script发送消息，通知开始执行批量任务
+          setTimeout(async () => {
+            try {
+              console.log(
+                "[Background] 等待3秒后，通知content script开始执行批量任务"
+              )
 
-            // 向content script发送消息
-            const response = await chrome.tabs.sendMessage(tabId, {
-              type: 'START_BATCH_SHIPMENT',
-              data: {
-                warehouse: config.warehouse,
-                shippingMethod: config.shippingMethod
-              }
-            })
-
-            console.log('[Background] Content script响应:', response)
-          } catch (error: any) {
-            console.error('[Background] 发送消息到content script失败:', error)
-            // 如果content script还未注入，可以尝试重试
-            if (error.message?.includes('Could not establish connection')) {
-              console.log('[Background] Content script可能还未注入，将在1秒后重试...')
-              setTimeout(async () => {
-                try {
-                  await chrome.tabs.sendMessage(tabId, {
-                    type: 'START_BATCH_SHIPMENT',
-                    data: {
-                      warehouse: config.warehouse,
-                      shippingMethod: config.shippingMethod
-                    }
-                  })
-                } catch (retryError) {
-                  console.error('[Background] 重试发送消息失败:', retryError)
+              // 向content script发送消息
+              const response = await chrome.tabs.sendMessage(tabId, {
+                type: "START_BATCH_SHIPMENT",
+                data: {
+                  warehouse: config.warehouse,
+                  shippingMethod: config.shippingMethod
                 }
-              }, 1000)
+              })
+
+              console.log("[Background] Content script响应:", response)
+            } catch (error: any) {
+              console.error("[Background] 发送消息到content script失败:", error)
+              // 如果content script还未注入，可以尝试重试
+              if (error.message?.includes("Could not establish connection")) {
+                console.log(
+                  "[Background] Content script可能还未注入，将在1秒后重试..."
+                )
+                setTimeout(async () => {
+                  try {
+                    await chrome.tabs.sendMessage(tabId, {
+                      type: "START_BATCH_SHIPMENT",
+                      data: {
+                        warehouse: config.warehouse,
+                        shippingMethod: config.shippingMethod
+                      }
+                    })
+                  } catch (retryError) {
+                    console.error("[Background] 重试发送消息失败:", retryError)
+                  }
+                }, 1000)
+              }
             }
-          }
-        }, 3000) // 等待3秒
+          }, 3000) // 等待3秒
+        }
       }
-    })
+    )
 
     return {
       success: true,
@@ -383,20 +417,27 @@ async function handleSaveShippingDeskData(data: {
   }>
 }) {
   try {
-    console.log('[Background] 保存发货台数据:', data)
-    
+    console.log("[Background] 保存发货台数据:", data)
+
     // 保存到chrome.storage
-    await chrome.storage.local.set({ 
-      shippingDeskData: data.groupedData 
+    await chrome.storage.local.set({
+      shippingDeskData: data.groupedData
     })
 
-    console.log('[Background] 发货台数据已保存，共', data.groupedData.length, '个仓库')
+    console.log(
+      "[Background] 发货台数据已保存，共",
+      data.groupedData.length,
+      "个仓库"
+    )
 
     return {
       success: true,
       message: "发货台数据已保存",
       warehouseCount: data.groupedData.length,
-      totalRows: data.groupedData.reduce((sum, group) => sum + group.rows.length, 0)
+      totalRows: data.groupedData.reduce(
+        (sum, group) => sum + group.rows.length,
+        0
+      )
     }
   } catch (error: any) {
     console.error("[Background] handleSaveShippingDeskData 发生错误:", error)
@@ -411,7 +452,7 @@ async function handleSaveShippingDeskData(data: {
  */
 function sanitizeFileName(fileName: string): string {
   // 移除Windows不允许的字符: < > : " / \ | ? *
-  return fileName.replace(/[<>:"/\\|?*]/g, '_').trim()
+  return fileName.replace(/[<>:"/\\|?*]/g, "_").trim()
 }
 
 /**
@@ -448,28 +489,36 @@ async function handleSaveShippingDeskDataAndDownloadImages(data: {
   }>
 }) {
   try {
-    console.log('[Background] 开始保存数据并下载图片:', data)
-    
+    console.log("[Background] 开始保存数据并下载图片:", data)
+
     // 保存分组数据到storage
-    await chrome.storage.local.set({ 
-      shippingDeskData: data.groupedData 
+    await chrome.storage.local.set({
+      shippingDeskData: data.groupedData
     })
 
-    console.log('[Background] 发货台数据已保存，共', data.groupedData.length, '个仓库')
+    console.log(
+      "[Background] 发货台数据已保存，共",
+      data.groupedData.length,
+      "个仓库"
+    )
 
     // 保存数据记录列表到storage
     // 获取现有的记录列表，追加新数据
-    const existingRecords = await chrome.storage.local.get('shippingDeskDataRecordList')
+    const existingRecords = await chrome.storage.local.get(
+      "shippingDeskDataRecordList"
+    )
     const existingList = existingRecords.shippingDeskDataRecordList || []
-    
+
     // 将新记录追加到现有列表
     const updatedList = [...existingList, ...data.dataRecordList]
-    
-    await chrome.storage.local.set({ 
-      shippingDeskDataRecordList: updatedList 
+
+    await chrome.storage.local.set({
+      shippingDeskDataRecordList: updatedList
     })
 
-    console.log(`[Background] 数据记录列表已保存，本次新增 ${data.dataRecordList.length} 条，总计 ${updatedList.length} 条记录`)
+    console.log(
+      `[Background] 数据记录列表已保存，本次新增 ${data.dataRecordList.length} 条，总计 ${updatedList.length} 条记录`
+    )
 
     // 清理文件夹名称和文件名
     const baseFolder = sanitizeFileName(data.baseFolder)
@@ -485,7 +534,7 @@ async function handleSaveShippingDeskDataAndDownloadImages(data: {
     // 遍历每个仓库
     for (const warehouseGroup of data.groupedData) {
       const warehouse = sanitizeFileName(warehouseGroup.warehouse)
-      
+
       // 遍历该仓库的每一行
       for (const row of warehouseGroup.rows) {
         if (!row.imageUrl || !row.fileName) {
@@ -507,7 +556,9 @@ async function handleSaveShippingDeskDataAndDownloadImages(data: {
           const fileName = sanitizeFileName(row.fileName)
           const filePath = `${baseFolder}/${shopName}/${warehouse}/${fileName}.jpg`
 
-          console.log(`[Background] 下载图片 (${downloadedImages + 1}/${totalImages}): ${row.imageUrl} -> ${filePath}`)
+          console.log(
+            `[Background] 下载图片 (${downloadedImages + 1}/${totalImages}): ${row.imageUrl} -> ${filePath}`
+          )
 
           // 使用Chrome下载API下载图片
           // 使用conflictAction: 'overwrite'确保使用指定的文件名，而不是URL中的文件名
@@ -515,7 +566,7 @@ async function handleSaveShippingDeskDataAndDownloadImages(data: {
             url: row.imageUrl,
             filename: filePath,
             saveAs: false, // 不弹出保存对话框，直接下载
-            conflictAction: 'overwrite' // 如果文件已存在，覆盖它，确保使用我们指定的文件名
+            conflictAction: "overwrite" // 如果文件已存在，覆盖它，确保使用我们指定的文件名
           })
 
           // 记录已下载的SKU
@@ -525,7 +576,10 @@ async function handleSaveShippingDeskDataAndDownloadImages(data: {
           // 添加延迟，避免下载过快导致请求失败
           await new Promise((resolve) => setTimeout(resolve, 300))
         } catch (downloadError: any) {
-          console.error(`[Background] 下载图片失败 (${row.fileName}):`, downloadError)
+          console.error(
+            `[Background] 下载图片失败 (${row.fileName}):`,
+            downloadError
+          )
         }
       }
     }
@@ -536,14 +590,20 @@ async function handleSaveShippingDeskDataAndDownloadImages(data: {
       success: true,
       message: "数据已保存，图片下载已开始",
       warehouseCount: data.groupedData.length,
-      totalRows: data.groupedData.reduce((sum, group) => sum + group.rows.length, 0),
+      totalRows: data.groupedData.reduce(
+        (sum, group) => sum + group.rows.length,
+        0
+      ),
       totalImages,
       downloadedImages,
       recordListCount: updatedList.length, // 记录列表总数
       newRecordCount: data.dataRecordList.length // 本次新增记录数
     }
   } catch (error: any) {
-    console.error("[Background] handleSaveShippingDeskDataAndDownloadImages 发生错误:", error)
+    console.error(
+      "[Background] handleSaveShippingDeskDataAndDownloadImages 发生错误:",
+      error
+    )
     throw error
   }
 }
@@ -558,80 +618,89 @@ async function handleBatchShipmentCompleted(tabId: number) {
     console.log(`[Background] 收到批量发货完成通知，标签页ID: ${tabId}`)
 
     // 监听标签页更新事件，等待页面跳转到发货台
-    chrome.tabs.onUpdated.addListener(function listener(tabIdListener, changeInfo, tab) {
-      // 检查是否是目标标签页
-      if (tabIdListener !== tabId) {
-        return
-      }
+    chrome.tabs.onUpdated.addListener(
+      function listener(tabIdListener, changeInfo, tab) {
+        // 检查是否是目标标签页
+        if (tabIdListener !== tabId) {
+          return
+        }
 
-      // 检查URL是否是发货台页面
-      const currentUrl = tab.url || ""
-      const isShippingDeskPage = currentUrl.includes('seller.kuajingmaihuo.com') &&
-                                currentUrl.includes('/main/order-manager/shipping-desk')
+        // 检查URL是否是发货台页面
+        const currentUrl = tab.url || ""
+        const isShippingDeskPage =
+          currentUrl.includes("seller.kuajingmaihuo.com") &&
+          currentUrl.includes("/main/order-manager/shipping-desk")
 
-      // 当页面加载完成且URL匹配发货台页面时
-      if (changeInfo.status === 'complete' && isShippingDeskPage) {
-        console.log(`[Background] 检测到发货台页面加载完成，URL: ${currentUrl}`)
+        // 当页面加载完成且URL匹配发货台页面时
+        if (changeInfo.status === "complete" && isShippingDeskPage) {
+          console.log(
+            `[Background] 检测到发货台页面加载完成，URL: ${currentUrl}`
+          )
 
-        // 移除监听器，避免重复执行
-        chrome.tabs.onUpdated.removeListener(listener)
+          // 移除监听器，避免重复执行
+          chrome.tabs.onUpdated.removeListener(listener)
 
-        // 等待3秒后，向content script发送消息，通知开始执行发货台任务
-        setTimeout(async () => {
-          try {
-            console.log('[Background] 等待3秒后，通知content script开始执行发货台任务')
+          // 等待3秒后，向content script发送消息，通知开始执行发货台任务
+          setTimeout(async () => {
+            try {
+              console.log(
+                "[Background] 等待3秒后，通知content script开始执行发货台任务"
+              )
 
-            // 获取用户配置
-            const config = await getUserConfig()
+              // 获取用户配置
+              const config = await getUserConfig()
 
-            if (!config) {
-              console.warn('[Background] 未找到用户配置，无法执行发货台任务')
-              return
-            }
-
-            // 向content script发送消息
-            const response = await chrome.tabs.sendMessage(tabId, {
-              type: 'START_SHIPPING_DESK_TASK',
-              data: {
-                warehouse: config.warehouse,
-                shippingMethod: config.shippingMethod
+              if (!config) {
+                console.warn("[Background] 未找到用户配置，无法执行发货台任务")
+                return
               }
-            })
 
-            console.log('[Background] Content script响应:', response)
-          } catch (error: any) {
-            console.error('[Background] 发送消息到content script失败:', error)
-            // 如果content script还未注入，可以尝试重试
-            if (error.message?.includes('Could not establish connection')) {
-              console.log('[Background] Content script可能还未注入，将在1秒后重试...')
-              setTimeout(async () => {
-                try {
-                  const config = await getUserConfig()
-                  if (config) {
-                    await chrome.tabs.sendMessage(tabId, {
-                      type: 'START_SHIPPING_DESK_TASK',
-                      data: {
-                        warehouse: config.warehouse,
-                        shippingMethod: config.shippingMethod
-                      }
-                    })
-                  }
-                } catch (retryError) {
-                  console.error('[Background] 重试发送消息失败:', retryError)
+              // 向content script发送消息
+              const response = await chrome.tabs.sendMessage(tabId, {
+                type: "START_SHIPPING_DESK_TASK",
+                data: {
+                  warehouse: config.warehouse,
+                  shippingMethod: config.shippingMethod
                 }
-              }, 1000)
+              })
+
+              console.log("[Background] Content script响应:", response)
+            } catch (error: any) {
+              console.error("[Background] 发送消息到content script失败:", error)
+              // 如果content script还未注入，可以尝试重试
+              if (error.message?.includes("Could not establish connection")) {
+                console.log(
+                  "[Background] Content script可能还未注入，将在1秒后重试..."
+                )
+                setTimeout(async () => {
+                  try {
+                    const config = await getUserConfig()
+                    if (config) {
+                      await chrome.tabs.sendMessage(tabId, {
+                        type: "START_SHIPPING_DESK_TASK",
+                        data: {
+                          warehouse: config.warehouse,
+                          shippingMethod: config.shippingMethod
+                        }
+                      })
+                    }
+                  } catch (retryError) {
+                    console.error("[Background] 重试发送消息失败:", retryError)
+                  }
+                }, 1000)
+              }
             }
-          }
-        }, 3000) // 等待3秒
+          }, 3000) // 等待3秒
+        }
       }
-    })
+    )
 
     return {
       success: true,
-      message: '已监听页面跳转，等待发货台页面加载完成'
+      message: "已监听页面跳转，等待发货台页面加载完成"
     }
   } catch (error: any) {
-    console.error('[Background] 处理批量发货完成错误:', error)
+    console.error("[Background] 处理批量发货完成错误:", error)
     throw error
   }
 }
@@ -647,7 +716,7 @@ async function handleOpenShippingDeskPage(data: {
   url: string
 }) {
   try {
-    console.log('[Background] 准备打开发货台页面:', data.url)
+    console.log("[Background] 准备打开发货台页面:", data.url)
 
     // 打开新窗口，设置为小窗口
     const newWindow = await chrome.windows.create({
@@ -655,7 +724,7 @@ async function handleOpenShippingDeskPage(data: {
       type: "normal",
       focused: true,
       width: 1200, // 窗口宽度
-      height: 800  // 窗口高度
+      height: 800 // 窗口高度
     })
 
     // 获取新窗口中的标签页ID
@@ -670,67 +739,77 @@ async function handleOpenShippingDeskPage(data: {
 
     // 监听标签页更新事件，等待页面加载完成
     // 当页面加载完成且URL匹配时，等待3秒后通知content script执行任务
-    chrome.tabs.onUpdated.addListener(function listener(tabId, changeInfo, tab) {
-      // 检查是否是目标标签页
-      if (tabId !== newTabId) {
-        return
-      }
+    chrome.tabs.onUpdated.addListener(
+      function listener(tabId, changeInfo, tab) {
+        // 检查是否是目标标签页
+        if (tabId !== newTabId) {
+          return
+        }
 
-      // 检查URL是否匹配（支持URL包含目标域名的情况）
-      const targetUrl = data.url
-      const currentUrl = tab.url || ""
-      const isUrlMatch = currentUrl.includes('seller.kuajingmaihuo.com') &&
-                        currentUrl.includes('/main/order-manager/shipping-desk')
+        // 检查URL是否匹配（支持URL包含目标域名的情况）
+        const targetUrl = data.url
+        const currentUrl = tab.url || ""
+        const isUrlMatch =
+          currentUrl.includes("seller.kuajingmaihuo.com") &&
+          currentUrl.includes("/main/order-manager/shipping-desk")
 
-      // 当页面加载完成且URL匹配时
-      if (changeInfo.status === 'complete' && isUrlMatch) {
-        console.log(`[Background] 检测到发货台页面加载完成，URL: ${currentUrl}`)
+        // 当页面加载完成且URL匹配时
+        if (changeInfo.status === "complete" && isUrlMatch) {
+          console.log(
+            `[Background] 检测到发货台页面加载完成，URL: ${currentUrl}`
+          )
 
-        // 移除监听器，避免重复执行
-        chrome.tabs.onUpdated.removeListener(listener)
+          // 移除监听器，避免重复执行
+          chrome.tabs.onUpdated.removeListener(listener)
 
-        // 等待3秒后，向content script发送消息，通知开始执行发货台任务
-        setTimeout(async () => {
-          try {
-            console.log('[Background] 等待3秒后，通知content script开始执行发货台任务')
+          // 等待3秒后，向content script发送消息，通知开始执行发货台任务
+          setTimeout(async () => {
+            try {
+              console.log(
+                "[Background] 等待3秒后，通知content script开始执行发货台任务"
+              )
 
-            // 获取用户配置
-            const config = await getUserConfig()
+              // 获取用户配置
+              const config = await getUserConfig()
 
-            // 向content script发送消息
-            const response = await chrome.tabs.sendMessage(tabId, {
-              type: 'START_SHIPPING_DESK_TASK',
-              data: {
-                warehouse: config?.warehouse || data.warehouse,
-                shippingMethod: config?.shippingMethod || data.shippingMethod
-              }
-            })
-
-            console.log('[Background] Content script响应:', response)
-          } catch (error: any) {
-            console.error('[Background] 发送消息到content script失败:', error)
-            // 如果content script还未注入，可以尝试重试
-            if (error.message?.includes('Could not establish connection')) {
-              console.log('[Background] Content script可能还未注入，将在1秒后重试...')
-              setTimeout(async () => {
-                try {
-                  const config = await getUserConfig()
-                  await chrome.tabs.sendMessage(tabId, {
-                    type: 'START_SHIPPING_DESK_TASK',
-                    data: {
-                      warehouse: config?.warehouse || data.warehouse,
-                      shippingMethod: config?.shippingMethod || data.shippingMethod
-                    }
-                  })
-                } catch (retryError) {
-                  console.error('[Background] 重试发送消息失败:', retryError)
+              // 向content script发送消息
+              const response = await chrome.tabs.sendMessage(tabId, {
+                type: "START_SHIPPING_DESK_TASK",
+                data: {
+                  warehouse: config?.warehouse || data.warehouse,
+                  shippingMethod: config?.shippingMethod || data.shippingMethod
                 }
-              }, 1000)
+              })
+
+              console.log("[Background] Content script响应:", response)
+            } catch (error: any) {
+              console.error("[Background] 发送消息到content script失败:", error)
+              // 如果content script还未注入，可以尝试重试
+              if (error.message?.includes("Could not establish connection")) {
+                console.log(
+                  "[Background] Content script可能还未注入，将在1秒后重试..."
+                )
+                setTimeout(async () => {
+                  try {
+                    const config = await getUserConfig()
+                    await chrome.tabs.sendMessage(tabId, {
+                      type: "START_SHIPPING_DESK_TASK",
+                      data: {
+                        warehouse: config?.warehouse || data.warehouse,
+                        shippingMethod:
+                          config?.shippingMethod || data.shippingMethod
+                      }
+                    })
+                  } catch (retryError) {
+                    console.error("[Background] 重试发送消息失败:", retryError)
+                  }
+                }, 1000)
+              }
             }
-          }
-        }, 3000) // 等待3秒
+          }, 3000) // 等待3秒
+        }
       }
-    })
+    )
 
     return {
       success: true,
@@ -755,12 +834,17 @@ async function handleRecordShippedStockOrder(data: {
 }) {
   try {
     // 处理备货单号，支持数组和单个字符串
-    const orderNos = Array.isArray(data.stockOrderNos) ? data.stockOrderNos : [data.stockOrderNos]
+    const orderNos = Array.isArray(data.stockOrderNos)
+      ? data.stockOrderNos
+      : [data.stockOrderNos]
 
-    console.log(`[Background] 记录 ${orderNos.length} 个已发货备货单号:`, orderNos)
+    console.log(
+      `[Background] 记录 ${orderNos.length} 个已发货备货单号:`,
+      orderNos
+    )
 
     // 获取现有的已发货记录
-    const existingData = await chrome.storage.local.get('shippedStockOrders')
+    const existingData = await chrome.storage.local.get("shippedStockOrders")
     const existingSet = new Set(existingData.shippedStockOrders || [])
 
     // 添加新的备货单号
@@ -777,7 +861,9 @@ async function handleRecordShippedStockOrder(data: {
       shippedStockOrders: Array.from(existingSet)
     })
 
-    console.log(`[Background] 已保存已发货备货单号，本次新增 ${addedCount} 个，总计 ${existingSet.size} 个`)
+    console.log(
+      `[Background] 已保存已发货备货单号，本次新增 ${addedCount} 个，总计 ${existingSet.size} 个`
+    )
 
     return {
       success: true,
@@ -797,9 +883,11 @@ async function handleRecordShippedStockOrder(data: {
  */
 async function getShippedStockOrders(): Promise<string[]> {
   try {
-    const result = await chrome.storage.local.get('shippedStockOrders')
+    const result = await chrome.storage.local.get("shippedStockOrders")
     const shippedOrders = result.shippedStockOrders || []
-    console.log(`[Background] 获取已发货备货单号，共 ${shippedOrders.length} 个`)
+    console.log(
+      `[Background] 获取已发货备货单号，共 ${shippedOrders.length} 个`
+    )
     return shippedOrders
   } catch (error: any) {
     console.error("[Background] getShippedStockOrders 发生错误:", error)
@@ -820,7 +908,9 @@ async function checkStockOrderShipped(data: {
 }> {
   try {
     // 处理备货单号，支持数组和单个字符串
-    const orderNos = Array.isArray(data.stockOrderNos) ? data.stockOrderNos : [data.stockOrderNos]
+    const orderNos = Array.isArray(data.stockOrderNos)
+      ? data.stockOrderNos
+      : [data.stockOrderNos]
 
     // 获取所有已发货的备货单号
     const shippedOrders = await getShippedStockOrders()
@@ -838,7 +928,9 @@ async function checkStockOrderShipped(data: {
       }
     }
 
-    console.log(`[Background] 检查备货单号发货状态: 已发货 ${shipped.length} 个, 未发货 ${notShipped.length} 个`)
+    console.log(
+      `[Background] 检查备货单号发货状态: 已发货 ${shipped.length} 个, 未发货 ${notShipped.length} 个`
+    )
 
     return {
       shipped,
@@ -861,11 +953,11 @@ async function clearShippedStockOrders(): Promise<{
 }> {
   try {
     // 获取现有的记录数量
-    const existingData = await chrome.storage.local.get('shippedStockOrders')
+    const existingData = await chrome.storage.local.get("shippedStockOrders")
     const count = (existingData.shippedStockOrders || []).length
 
     // 清除记录
-    await chrome.storage.local.remove('shippedStockOrders')
+    await chrome.storage.local.remove("shippedStockOrders")
 
     console.log(`[Background] 已清除 ${count} 个已发货备货单号记录`)
 
@@ -887,17 +979,32 @@ async function clearShippedStockOrders(): Promise<{
  * @param tabId 当前标签页ID
  * @param data 包含刷新ID、仓库、发货方式和URL的数据
  */
-async function handleContinueAfterPrintRefresh(tabId: number | undefined, data: { refreshId: string; warehouse: string; shippingMethod: string; url: string }) {
+async function handleContinueAfterPrintRefresh(
+  tabId: number | undefined,
+  data: {
+    refreshId: string
+    warehouse: string
+    shippingMethod: string
+    url: string
+  }
+) {
   try {
     if (!tabId) {
       throw new Error("无法获取标签页ID")
     }
 
-    console.log(`[Background] 收到打印后刷新继续执行通知，标签页ID: ${tabId}, 刷新ID: ${data.refreshId}`)
-    
+    console.log(
+      `[Background] 收到打印后刷新继续执行通知，标签页ID: ${tabId}, 刷新ID: ${data.refreshId}`
+    )
+
     // 更新storage中的标志，记录tabId
-    const refreshFlag = await chrome.storage.local.get('shouldContinueAfterRefresh')
-    if (refreshFlag.shouldContinueAfterRefresh && refreshFlag.shouldContinueAfterRefresh.refreshId === data.refreshId) {
+    const refreshFlag = await chrome.storage.local.get(
+      "shouldContinueAfterRefresh"
+    )
+    if (
+      refreshFlag.shouldContinueAfterRefresh &&
+      refreshFlag.shouldContinueAfterRefresh.refreshId === data.refreshId
+    ) {
       await chrome.storage.local.set({
         shouldContinueAfterRefresh: {
           ...refreshFlag.shouldContinueAfterRefresh,
@@ -917,79 +1024,99 @@ async function handleContinueAfterPrintRefresh(tabId: number | undefined, data: 
     console.log(`[Background] 开始监听页面刷新完成事件...`)
 
     // 监听标签页更新事件，等待页面刷新完成
-    chrome.tabs.onUpdated.addListener(function listener(tabIdListener, changeInfo, tab) {
-      // 检查是否是目标标签页
-      if (tabIdListener !== tabId) {
-        return
-      }
+    chrome.tabs.onUpdated.addListener(
+      function listener(tabIdListener, changeInfo, tab) {
+        // 检查是否是目标标签页
+        if (tabIdListener !== tabId) {
+          return
+        }
 
-      // 检查URL是否匹配shipping-list页面
-      const currentUrl = tab.url || ""
-      const isShippingListPage = currentUrl.includes('seller.kuajingmaihuo.com') &&
-                                 currentUrl.includes('/main/order-manager/shipping-list')
+        // 检查URL是否匹配shipping-list页面
+        const currentUrl = tab.url || ""
+        const isShippingListPage =
+          currentUrl.includes("seller.kuajingmaihuo.com") &&
+          currentUrl.includes("/main/order-manager/shipping-list")
 
-      // 当页面加载完成且URL匹配时
-      if (changeInfo.status === 'complete' && isShippingListPage) {
-        console.log(`[Background] 检测到shipping-list页面刷新完成，URL: ${currentUrl}`)
+        // 当页面加载完成且URL匹配时
+        if (changeInfo.status === "complete" && isShippingListPage) {
+          console.log(
+            `[Background] 检测到shipping-list页面刷新完成，URL: ${currentUrl}`
+          )
 
-        // 检查是否是系统触发的刷新（通过storage标志判断）
-        chrome.storage.local.get('shouldContinueAfterRefresh').then((result) => {
-          const flag = result.shouldContinueAfterRefresh
-          
-          // 检查标志是否存在且匹配
-          if (!flag || flag.refreshId !== data.refreshId || flag.tabId !== tabId) {
-            console.log('[Background] 这是用户主动刷新，不执行后续步骤')
-            // 移除监听器
-            chrome.tabs.onUpdated.removeListener(listener)
-            return
-          }
+          // 检查是否是系统触发的刷新（通过storage标志判断）
+          chrome.storage.local
+            .get("shouldContinueAfterRefresh")
+            .then((result) => {
+              const flag = result.shouldContinueAfterRefresh
 
-          // 清除标志，避免重复执行
-          chrome.storage.local.remove('shouldContinueAfterRefresh')
-          console.log('[Background] 已清除刷新标志，确认为系统刷新')
-
-          // 移除监听器，避免重复执行
-          chrome.tabs.onUpdated.removeListener(listener)
-
-          // 等待3秒后，继续执行后续步骤（批量装箱发货等）
-          setTimeout(async () => {
-            try {
-              console.log('[Background] 页面刷新完成（系统刷新），等待3秒后继续执行后续步骤')
-
-              // 向content script发送继续执行的消息
-              const response = await chrome.tabs.sendMessage(tabId, {
-                type: 'CONTINUE_SHIPMENT_STEPS',
-                data: {
-                  warehouse: data.warehouse,
-                  shippingMethod: data.shippingMethod
-                }
-              })
-
-              console.log('[Background] Content script响应:', response)
-            } catch (error: any) {
-              console.error('[Background] 发送继续执行消息失败:', error)
-              // 如果content script还未注入，可以尝试重试
-              if (error.message?.includes('Could not establish connection')) {
-                console.log('[Background] Content script可能还未注入，将在1秒后重试...')
-                setTimeout(async () => {
-                  try {
-                    await chrome.tabs.sendMessage(tabId, {
-                      type: 'CONTINUE_SHIPMENT_STEPS',
-                      data: {
-                        warehouse: data.warehouse,
-                        shippingMethod: data.shippingMethod
-                      }
-                    })
-                  } catch (retryError) {
-                    console.error('[Background] 重试发送继续执行消息失败:', retryError)
-                  }
-                }, 1000)
+              // 检查标志是否存在且匹配
+              if (
+                !flag ||
+                flag.refreshId !== data.refreshId ||
+                flag.tabId !== tabId
+              ) {
+                console.log("[Background] 这是用户主动刷新，不执行后续步骤")
+                // 移除监听器
+                chrome.tabs.onUpdated.removeListener(listener)
+                return
               }
-            }
-          }, 3000) // 等待3秒
-        })
+
+              // 清除标志，避免重复执行
+              chrome.storage.local.remove("shouldContinueAfterRefresh")
+              console.log("[Background] 已清除刷新标志，确认为系统刷新")
+
+              // 移除监听器，避免重复执行
+              chrome.tabs.onUpdated.removeListener(listener)
+
+              // 等待3秒后，继续执行后续步骤（批量装箱发货等）
+              setTimeout(async () => {
+                try {
+                  console.log(
+                    "[Background] 页面刷新完成（系统刷新），等待3秒后继续执行后续步骤"
+                  )
+
+                  // 向content script发送继续执行的消息
+                  const response = await chrome.tabs.sendMessage(tabId, {
+                    type: "CONTINUE_SHIPMENT_STEPS",
+                    data: {
+                      warehouse: data.warehouse,
+                      shippingMethod: data.shippingMethod
+                    }
+                  })
+
+                  console.log("[Background] Content script响应:", response)
+                } catch (error: any) {
+                  console.error("[Background] 发送继续执行消息失败:", error)
+                  // 如果content script还未注入，可以尝试重试
+                  if (
+                    error.message?.includes("Could not establish connection")
+                  ) {
+                    console.log(
+                      "[Background] Content script可能还未注入，将在1秒后重试..."
+                    )
+                    setTimeout(async () => {
+                      try {
+                        await chrome.tabs.sendMessage(tabId, {
+                          type: "CONTINUE_SHIPMENT_STEPS",
+                          data: {
+                            warehouse: data.warehouse,
+                            shippingMethod: data.shippingMethod
+                          }
+                        })
+                      } catch (retryError) {
+                        console.error(
+                          "[Background] 重试发送继续执行消息失败:",
+                          retryError
+                        )
+                      }
+                    }, 1000)
+                  }
+                }
+              }, 3000) // 等待3秒
+            })
+        }
       }
-    })
+    )
 
     return {
       success: true,
@@ -997,7 +1124,10 @@ async function handleContinueAfterPrintRefresh(tabId: number | undefined, data: 
       tabId
     }
   } catch (error: any) {
-    console.error("[Background] handleContinueAfterPrintRefresh 发生错误:", error)
+    console.error(
+      "[Background] handleContinueAfterPrintRefresh 发生错误:",
+      error
+    )
     throw error
   }
 }
@@ -1007,7 +1137,10 @@ async function handleContinueAfterPrintRefresh(tabId: number | undefined, data: 
  * @param tabId 当前标签页ID
  * @param data 包含URL的数据
  */
-async function handleNavigateToShippingList(tabId: number | undefined, data: { url: string }) {
+async function handleNavigateToShippingList(
+  tabId: number | undefined,
+  data: { url: string }
+) {
   try {
     if (!tabId) {
       throw new Error("无法获取标签页ID")
@@ -1023,66 +1156,76 @@ async function handleNavigateToShippingList(tabId: number | undefined, data: { u
     console.log(`[Background] 已跳转到shipping-list页面，标签页ID: ${tabId}`)
 
     // 监听标签页更新事件，等待页面加载完成
-    chrome.tabs.onUpdated.addListener(function listener(tabIdListener, changeInfo, tab) {
-      // 检查是否是目标标签页
-      if (tabIdListener !== tabId) {
-        return
-      }
+    chrome.tabs.onUpdated.addListener(
+      function listener(tabIdListener, changeInfo, tab) {
+        // 检查是否是目标标签页
+        if (tabIdListener !== tabId) {
+          return
+        }
 
-      // 检查URL是否匹配shipping-list页面
-      const currentUrl = tab.url || ""
-      const isShippingListPage = currentUrl.includes('seller.kuajingmaihuo.com') &&
-                                 currentUrl.includes('/main/order-manager/shipping-list')
+        // 检查URL是否匹配shipping-list页面
+        const currentUrl = tab.url || ""
+        const isShippingListPage =
+          currentUrl.includes("seller.kuajingmaihuo.com") &&
+          currentUrl.includes("/main/order-manager/shipping-list")
 
-      // 当页面加载完成且URL匹配时
-      if (changeInfo.status === 'complete' && isShippingListPage) {
-        console.log(`[Background] 检测到shipping-list页面加载完成，URL: ${currentUrl}`)
+        // 当页面加载完成且URL匹配时
+        if (changeInfo.status === "complete" && isShippingListPage) {
+          console.log(
+            `[Background] 检测到shipping-list页面加载完成，URL: ${currentUrl}`
+          )
 
-        // 移除监听器，避免重复执行
-        chrome.tabs.onUpdated.removeListener(listener)
+          // 移除监听器，避免重复执行
+          chrome.tabs.onUpdated.removeListener(listener)
 
-        // 等待3秒后，发送装箱事件
-        setTimeout(async () => {
-          try {
-            console.log('[Background] 等待3秒后，发送装箱事件')
+          // 等待3秒后，发送装箱事件
+          setTimeout(async () => {
+            try {
+              console.log("[Background] 等待3秒后，发送装箱事件")
 
-            // 获取用户配置
-            const config = await getUserConfig()
+              // 获取用户配置
+              const config = await getUserConfig()
 
-            // 向content script发送装箱事件消息
-            const response = await chrome.tabs.sendMessage(tabId, {
-              type: 'START_BOXING_TASK',
-              data: {
-                warehouse: config?.warehouse || '',
-                shippingMethod: config?.shippingMethod || ''
-              }
-            })
-
-            console.log('[Background] Content script响应:', response)
-          } catch (error: any) {
-            console.error('[Background] 发送装箱事件失败:', error)
-            // 如果content script还未注入，可以尝试重试
-            if (error.message?.includes('Could not establish connection')) {
-              console.log('[Background] Content script可能还未注入，将在1秒后重试...')
-              setTimeout(async () => {
-                try {
-                  const config = await getUserConfig()
-                  await chrome.tabs.sendMessage(tabId, {
-                    type: 'START_BOXING_TASK',
-                    data: {
-                      warehouse: config?.warehouse || '',
-                      shippingMethod: config?.shippingMethod || ''
-                    }
-                  })
-                } catch (retryError) {
-                  console.error('[Background] 重试发送装箱事件失败:', retryError)
+              // 向content script发送装箱事件消息
+              const response = await chrome.tabs.sendMessage(tabId, {
+                type: "START_BOXING_TASK",
+                data: {
+                  warehouse: config?.warehouse || "",
+                  shippingMethod: config?.shippingMethod || ""
                 }
-              }, 1000)
+              })
+
+              console.log("[Background] Content script响应:", response)
+            } catch (error: any) {
+              console.error("[Background] 发送装箱事件失败:", error)
+              // 如果content script还未注入，可以尝试重试
+              if (error.message?.includes("Could not establish connection")) {
+                console.log(
+                  "[Background] Content script可能还未注入，将在1秒后重试..."
+                )
+                setTimeout(async () => {
+                  try {
+                    const config = await getUserConfig()
+                    await chrome.tabs.sendMessage(tabId, {
+                      type: "START_BOXING_TASK",
+                      data: {
+                        warehouse: config?.warehouse || "",
+                        shippingMethod: config?.shippingMethod || ""
+                      }
+                    })
+                  } catch (retryError) {
+                    console.error(
+                      "[Background] 重试发送装箱事件失败:",
+                      retryError
+                    )
+                  }
+                }, 1000)
+              }
             }
-          }
-        }, 3000) // 等待3秒
+          }, 3000) // 等待3秒
+        }
       }
-    })
+    )
 
     return {
       success: true,
@@ -1101,38 +1244,43 @@ async function handleNavigateToShippingList(tabId: number | undefined, data: { u
  * @param tabId 标签页ID
  * @param data 包含PDF文件名和时间戳的数据
  */
-async function handlePDFGenerated(tabId: number | undefined, data: {
-  fileName: string
-  timestamp: number
-}): Promise<{
+async function handlePDFGenerated(
+  tabId: number | undefined,
+  data: {
+    fileName: string
+    timestamp: number
+  }
+): Promise<{
   success: boolean
   message: string
   fileName: string
 }> {
   try {
-    console.log(`[Background] 收到PDF生成通知，标签页ID: ${tabId}, 文件名: ${data.fileName}`)
-    
+    console.log(
+      `[Background] 收到PDF生成通知，标签页ID: ${tabId}, 文件名: ${data.fileName}`
+    )
+
     // 保存PDF生成记录到storage（可选）
-    const existingRecords = await chrome.storage.local.get('generatedPDFs')
+    const existingRecords = await chrome.storage.local.get("generatedPDFs")
     const pdfRecords = existingRecords.generatedPDFs || []
-    
+
     pdfRecords.push({
       fileName: data.fileName,
       timestamp: data.timestamp,
       tabId: tabId
     })
-    
+
     // 只保留最近100条记录
     if (pdfRecords.length > 100) {
       pdfRecords.shift()
     }
-    
+
     await chrome.storage.local.set({
       generatedPDFs: pdfRecords
     })
-    
+
     console.log(`[Background] PDF生成记录已保存，文件名: ${data.fileName}`)
-    
+
     return {
       success: true,
       message: "PDF生成记录已保存",
@@ -1157,17 +1305,17 @@ async function handleSaveBatchPrintData(data: {
   message: string
 }> {
   try {
-    console.log('[Background] 保存批量打印数据:', data)
-    
+    console.log("[Background] 保存批量打印数据:", data)
+
     // 保存到chrome.storage
-    await chrome.storage.local.set({ 
+    await chrome.storage.local.set({
       batchPrintData: {
         printData: data.printData,
         timestamp: data.timestamp
       }
     })
 
-    console.log('[Background] 批量打印数据已保存')
+    console.log("[Background] 批量打印数据已保存")
 
     return {
       success: true,
@@ -1186,15 +1334,18 @@ async function handleSaveBatchPrintData(data: {
  */
 async function getBatchPrintData(): Promise<any | null> {
   try {
-    const result = await chrome.storage.local.get('batchPrintData')
+    const result = await chrome.storage.local.get("batchPrintData")
     const batchPrintData = result.batchPrintData || null
-    
+
     if (batchPrintData) {
-      console.log('[Background] 获取到批量打印数据，时间戳:', batchPrintData.timestamp)
+      console.log(
+        "[Background] 获取到批量打印数据，时间戳:",
+        batchPrintData.timestamp
+      )
     } else {
-      console.log('[Background] 未找到批量打印数据')
+      console.log("[Background] 未找到批量打印数据")
     }
-    
+
     return batchPrintData
   } catch (error: any) {
     console.error("[Background] getBatchPrintData 发生错误:", error)
@@ -1207,7 +1358,9 @@ async function getBatchPrintData(): Promise<any | null> {
  * 使用chrome.scripting.executeScript将脚本注入到页面上下文中
  * @param tabId 标签页ID
  */
-async function handleInjectPrintInterceptor(tabId: number | undefined): Promise<{
+async function handleInjectPrintInterceptor(
+  tabId: number | undefined
+): Promise<{
   success: boolean
   message: string
 }> {
@@ -1218,124 +1371,137 @@ async function handleInjectPrintInterceptor(tabId: number | undefined): Promise<
 
     console.log(`[Background] 开始注入打印接口拦截脚本，标签页ID: ${tabId}`)
 
-    // 读取injected.ts文件内容
-    // 注意：在Plasmo中，我们需要使用chrome.runtime.getURL获取文件路径
-    // 但由于我们需要直接注入代码，我们可以将injected.ts的内容作为字符串注入
-    
     // 定义注入到页面上下文的函数
-    // 这个函数会在页面上下文中执行，可以访问页面的window.fetch
-    // 注意：这个函数中的代码会在页面上下文中执行，不能使用TypeScript类型注解
-    // @ts-ignore - 注入函数会在页面上下文中执行，window对象可能有自定义属性
+    // 这个函数会在页面上下文中执行，可以访问页面的window.fetch和window.print
     const injectInterceptor = () => {
-      // 检查是否已经设置过拦截器
-      // 使用类型断言，因为页面上下文中的window对象可能有自定义属性
-      if ((window as any).__printAPIIntercepted) {
-        console.log('[Injected] 打印接口拦截器已设置，跳过')
-        return
-      }
-      
-      // 保存原始的fetch函数
-      const originalFetch = window.fetch
-      
-      // 重写fetch函数
-      window.fetch = async function(...args: any[]) {
-        // 获取URL字符串
-        let url: string
-        if (typeof args[0] === 'string') {
-          url = args[0]
-        } else if (args[0] instanceof Request) {
-          url = args[0].url
-        } else if (args[0] && typeof args[0] === 'object' && 'url' in args[0]) {
-          url = String(args[0].url)
-        } else {
-          url = String(args[0])
+      // 插件运行状态标记
+      let isPluginRunning = false
+
+      // 监听来自content script的消息，更新插件运行状态
+      window.addEventListener("message", (event) => {
+        if (event.source !== window) return
+
+        if (event.data.type === "SET_PLUGIN_RUNNING_STATUS") {
+          isPluginRunning = event.data.status
+          console.log(
+            "[Injected] 插件运行状态已更新:",
+            isPluginRunning ? "运行中" : "已停止"
+          )
         }
-        const urlLower = url.toLowerCase()
-        
-        // 检查是否是打印相关的接口
-        // 特别注意：printBoxMarks 是批量打印接口
-        const isPrintRequest = urlLower.includes('print') || 
-                              urlLower.includes('label') || 
-                              urlLower.includes('packing') ||
-                              urlLower.includes('shipping') ||
-                              urlLower.includes('batchprint') ||
-                              urlLower.includes('batch-print') ||
-                              urlLower.includes('printlabel') ||
-                              urlLower.includes('printboxmarks') ||
-                              urlLower.includes('print-box-marks')
-        
-        if (isPrintRequest) {
-          console.log('[Injected] 检测到打印接口请求:', url)
-          
-          try {
-            // 调用原始的fetch
-            const response = await originalFetch.apply(this, args)
-            
-            // 克隆响应，以便我们可以读取数据而不影响原始响应
-            const clonedResponse = response.clone()
-            
-            // 异步处理响应数据
-            clonedResponse.text().then(async (text) => {
-              try {
-                // 尝试解析JSON
-                let data
-                try {
-                  data = JSON.parse(text)
-                } catch {
-                  // 如果不是JSON，可能是HTML或其他格式
-                  data = text
-                }
-                
-                console.log('[Injected] 获取到打印接口返回的数据:', data)
-                
-                // 通过postMessage通知content script
-                window.postMessage({
-                  type: 'PRINT_API_RESPONSE',
-                  source: 'injected-script',
-                  data: {
-                    url: url,
-                    data: data,
-                    timestamp: Date.now()
-                  }
-                }, '*')
-                
-                console.log('[Injected] 已通过postMessage通知content script')
-                
-              } catch (error) {
-                console.error('[Injected] 处理打印接口响应失败:', error)
-              }
-            }).catch((error) => {
-              console.error('[Injected] 读取打印接口响应失败:', error)
-            })
-            
-            return response
-          } catch (error) {
-            console.error('[Injected] 拦截打印接口请求失败:', error)
-            return originalFetch.apply(this, args)
+      })
+
+      // 拦截window.print()，根据插件运行状态决定是否拦截
+      if (!(window as any).__windowPrintIntercepted) {
+        const originalPrint = window.print
+        window.print = function (...args) {
+          if (isPluginRunning) {
+            console.log("[Injected] 插件运行中，拦截window.print()调用")
+            return
           }
+          console.log("[Injected] 插件未运行，正常调用window.print()")
+          return originalPrint.apply(this, args)
         }
-        
-        // 非打印请求，直接调用原始fetch
-        return originalFetch.apply(this, args)
+        ;(window as any).__windowPrintIntercepted = true
+        console.log("[Injected] window.print()拦截器已设置")
       }
-      
-      // 标记拦截器已设置
-      // 使用类型断言，因为页面上下文中的window对象可能有自定义属性
-      ;(window as any).__printAPIIntercepted = true
-      
-      console.log('[Injected] 打印接口拦截器已设置')
+
+      // 拦截fetch请求
+      if (!(window as any).__printAPIIntercepted) {
+        const originalFetch = window.fetch
+        window.fetch = async function (...args: any[]) {
+          let url: string
+          if (typeof args[0] === "string") {
+            url = args[0]
+          } else if (args[0] instanceof Request) {
+            url = args[0].url
+          } else if (
+            args[0] &&
+            typeof args[0] === "object" &&
+            "url" in args[0]
+          ) {
+            url = String(args[0].url)
+          } else {
+            url = String(args[0])
+          }
+          const urlLower = url.toLowerCase()
+
+          const isPrintRequest =
+            urlLower.includes("print") ||
+            urlLower.includes("label") ||
+            urlLower.includes("packing") ||
+            urlLower.includes("shipping") ||
+            urlLower.includes("batchprint") ||
+            urlLower.includes("batch-print") ||
+            urlLower.includes("printlabel") ||
+            urlLower.includes("printboxmarks") ||
+            urlLower.includes("print-box-marks")
+
+          if (isPrintRequest) {
+            console.log("[Injected] 检测到打印接口请求:", url)
+
+            try {
+              const response = await originalFetch.apply(this, args)
+              const clonedResponse = response.clone()
+
+              clonedResponse
+                .text()
+                .then(async (text) => {
+                  try {
+                    let data
+                    try {
+                      data = JSON.parse(text)
+                    } catch {
+                      data = text
+                    }
+
+                    console.log("[Injected] 获取到打印接口返回的数据:", data)
+
+                    window.postMessage(
+                      {
+                        type: "PRINT_API_RESPONSE",
+                        source: "injected-script",
+                        data: {
+                          url: url,
+                          data: data,
+                          timestamp: Date.now()
+                        }
+                      },
+                      "*"
+                    )
+
+                    console.log(
+                      "[Injected] 已通过postMessage通知content script"
+                    )
+                  } catch (error) {
+                    console.error("[Injected] 处理打印接口响应失败:", error)
+                  }
+                })
+                .catch((error) => {
+                  console.error("[Injected] 读取打印接口响应失败:", error)
+                })
+
+              return response
+            } catch (error) {
+              console.error("[Injected] 拦截打印接口请求失败:", error)
+              return originalFetch.apply(this, args)
+            }
+          }
+
+          return originalFetch.apply(this, args)
+        }
+        ;(window as any).__printAPIIntercepted = true
+        console.log("[Injected] 打印接口拦截器已设置")
+      }
     }
 
     // 使用chrome.scripting.executeScript注入脚本到页面上下文
-    // world: 'MAIN' 表示注入到页面上下文（MAIN world），而不是isolated world
-    // 这样注入的脚本可以访问页面的window对象和fetch函数
     await chrome.scripting.executeScript({
       target: { tabId: tabId },
       func: injectInterceptor,
-      world: 'MAIN' // 注入到页面上下文（MAIN world），而不是isolated world
+      world: "MAIN"
     })
 
-    console.log('[Background] 打印接口拦截脚本已成功注入')
+    console.log("[Background] 打印接口拦截脚本已成功注入")
 
     return {
       success: true,
@@ -1343,6 +1509,167 @@ async function handleInjectPrintInterceptor(tabId: number | undefined): Promise<
     }
   } catch (error: any) {
     console.error("[Background] handleInjectPrintInterceptor 发生错误:", error)
+    throw error
+  }
+}
+
+interface TableRowData {
+  index: number
+  stockOrderNo: string
+  processed?: boolean
+}
+
+interface BatchDownloadData {
+  tableData: Record<string, TableRowData>
+  currentUrl: string
+}
+
+async function handleStartBatchDownload(
+  tabId: number | undefined,
+  data: BatchDownloadData
+): Promise<{ success: boolean; message: string }> {
+  try {
+    if (!tabId) {
+      throw new Error("无法获取标签页ID")
+    }
+
+    const stockOrderNos = Object.keys(data.tableData)
+    console.log(`[Background] 开始批量下载，共 ${stockOrderNos.length} 行数据`)
+
+    await chrome.storage.local.set({
+      batchDownloadData: data
+    })
+
+    console.log("[Background] 已保存批量下载数据到 storage")
+
+    const firstStockOrderNo = stockOrderNos[0]
+
+    const response = await chrome.tabs.sendMessage(tabId, {
+      type: "PROCESS_NEXT_ROW",
+      data: {
+        stockOrderNo: firstStockOrderNo
+      }
+    })
+
+    if (response && response.success) {
+      console.log(`[Background] 已发送处理备货单号 ${firstStockOrderNo} 的请求`)
+    }
+
+    return {
+      success: true,
+      message: "批量下载已启动"
+    }
+  } catch (error: any) {
+    console.error("[Background] handleStartBatchDownload 发生错误:", error)
+    throw error
+  }
+}
+
+async function handleProcessNextRow(
+  tabId: number | undefined,
+  data: { stockOrderNo: string }
+): Promise<{ success: boolean; message: string }> {
+  try {
+    if (!tabId) {
+      throw new Error("无法获取标签页ID")
+    }
+
+    const storedData = await chrome.storage.local.get("batchDownloadData")
+
+    if (!storedData || !storedData.batchDownloadData) {
+      console.log("[Background] 未找到批量下载数据，批量下载已完成或未启动")
+      return {
+        success: true,
+        message: "批量下载已完成"
+      }
+    }
+
+    const batchData = storedData.batchDownloadData as BatchDownloadData
+    const stockOrderNo = data.stockOrderNo
+
+    if (!stockOrderNo || !batchData.tableData[stockOrderNo]) {
+      console.log("[Background] 备货单号不存在，批量下载已完成")
+      await chrome.storage.local.remove("batchDownloadData")
+      return {
+        success: true,
+        message: "所有行已处理完成"
+      }
+    }
+
+    const currentRow = batchData.tableData[stockOrderNo]
+    const stockOrderNos = Object.keys(batchData.tableData)
+    const currentIndex = stockOrderNos.indexOf(stockOrderNo)
+    console.log(
+      `[Background] 处理第 ${currentIndex + 1}/${stockOrderNos.length} 行，备货单号: ${stockOrderNo}`
+    )
+
+    const response = await chrome.tabs.sendMessage(tabId, {
+      type: "EXECUTE_PROCESS_ROW",
+      data: {
+        stockOrderNo: stockOrderNo
+      }
+    })
+
+    if (!response || !response.success) {
+      console.error(`[Background] 备货单号 ${stockOrderNo} 处理失败`)
+      return {
+        success: false,
+        message: "行处理失败"
+      }
+    }
+
+    console.log(
+      `[Background] 备货单号 ${stockOrderNo} 处理成功，等待页面刷新...`
+    )
+
+    // 标记当前行为已处理
+    batchData.tableData[stockOrderNo].processed = true
+    await chrome.storage.local.set({
+      batchDownloadData: batchData
+    })
+    console.log(`[Background] 已标记备货单号 ${stockOrderNo} 为已处理`)
+
+    const waitTime = 5000
+    console.log(`[Background] 等待 ${waitTime / 1000} 秒...`)
+    await new Promise((resolve) => setTimeout(resolve, waitTime))
+
+    // 查找下一个未处理的备货单号
+    let nextStockOrderNo: string | null = null
+    for (const no of stockOrderNos) {
+      if (!batchData.tableData[no].processed) {
+        nextStockOrderNo = no
+        break
+      }
+    }
+
+    if (!nextStockOrderNo) {
+      console.log("[Background] 所有行已处理完成")
+      await chrome.storage.local.remove("batchDownloadData")
+      return {
+        success: true,
+        message: "所有行已处理完成"
+      }
+    }
+
+    const nextIndex = stockOrderNos.indexOf(nextStockOrderNo)
+    console.log(
+      `[Background] 准备处理第 ${nextIndex + 1}/${stockOrderNos.length} 行，备货单号: ${nextStockOrderNo}`
+    )
+
+    await chrome.tabs.sendMessage(tabId, {
+      type: "PROCESS_NEXT_ROW",
+      data: {
+        stockOrderNo: nextStockOrderNo
+      }
+    })
+
+    console.log("[Background] 已发送处理下一行的请求")
+    return {
+      success: true,
+      message: "继续处理下一行"
+    }
+  } catch (error: any) {
+    console.error("[Background] handleProcessNextRow 发生错误:", error)
     throw error
   }
 }

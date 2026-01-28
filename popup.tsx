@@ -3,8 +3,8 @@
  * 插件的主要控制界面，包含批量自动发货表单
  */
 
-import { SettingOutlined, SendOutlined } from "@ant-design/icons"
-import { Button, Card, Form, Select, Space, Typography, message } from "antd"
+import { SendOutlined, SettingOutlined } from "@ant-design/icons"
+import { Button, Card, Form, message, Select, Space, Typography } from "antd"
 import React, { useEffect, useState } from "react"
 
 import "./style.css"
@@ -79,8 +79,12 @@ interface ShipmentFormData {
 const PopupPage: React.FC = () => {
   const [form] = Form.useForm<ShipmentFormData>()
   const [loading, setLoading] = useState(false)
-  const [warehouseOptions, setWarehouseOptions] = useState<OptionItem[]>(DEFAULT_WAREHOUSE_OPTIONS)
-  const [productOptions, setProductOptions] = useState<OptionItem[]>(DEFAULT_PRODUCT_OPTIONS)
+  const [warehouseOptions, setWarehouseOptions] = useState<OptionItem[]>(
+    DEFAULT_WAREHOUSE_OPTIONS
+  )
+  const [productOptions, setProductOptions] = useState<OptionItem[]>(
+    DEFAULT_PRODUCT_OPTIONS
+  )
 
   /**
    * 从 chrome.storage 加载配置
@@ -88,13 +92,24 @@ const PopupPage: React.FC = () => {
   useEffect(() => {
     const loadConfig = async () => {
       try {
-        const result = await chrome.storage.local.get(["warehouseOptions", "productOptions"])
-        
-        if (result.warehouseOptions && Array.isArray(result.warehouseOptions) && result.warehouseOptions.length > 0) {
+        const result = await chrome.storage.local.get([
+          "warehouseOptions",
+          "productOptions"
+        ])
+
+        if (
+          result.warehouseOptions &&
+          Array.isArray(result.warehouseOptions) &&
+          result.warehouseOptions.length > 0
+        ) {
           setWarehouseOptions(result.warehouseOptions)
         }
-        
-        if (result.productOptions && Array.isArray(result.productOptions) && result.productOptions.length > 0) {
+
+        if (
+          result.productOptions &&
+          Array.isArray(result.productOptions) &&
+          result.productOptions.length > 0
+        ) {
           setProductOptions(result.productOptions)
         }
       } catch (error) {
@@ -105,12 +120,18 @@ const PopupPage: React.FC = () => {
     loadConfig()
 
     // 监听 storage 变化，当 options 页面保存配置后自动更新
-    const handleStorageChange = (changes: { [key: string]: chrome.storage.StorageChange }) => {
+    const handleStorageChange = (changes: {
+      [key: string]: chrome.storage.StorageChange
+    }) => {
       if (changes.warehouseOptions) {
-        setWarehouseOptions(changes.warehouseOptions.newValue || DEFAULT_WAREHOUSE_OPTIONS)
+        setWarehouseOptions(
+          changes.warehouseOptions.newValue || DEFAULT_WAREHOUSE_OPTIONS
+        )
       }
       if (changes.productOptions) {
-        setProductOptions(changes.productOptions.newValue || DEFAULT_PRODUCT_OPTIONS)
+        setProductOptions(
+          changes.productOptions.newValue || DEFAULT_PRODUCT_OPTIONS
+        )
       }
     }
 
@@ -147,7 +168,7 @@ const PopupPage: React.FC = () => {
   /**
    * 直接执行发货步骤（开发阶段测试用）
    * 跳过前面的步骤，直接执行发货操作
-   * 
+   *
    * 注意：这是开发阶段的功能，用于测试发货步骤
    * 正式版本应该从第一步开始执行完整流程
    */
@@ -156,41 +177,48 @@ const PopupPage: React.FC = () => {
 
     try {
       // 获取当前活动标签页
-      const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true })
-      
+      const [activeTab] = await chrome.tabs.query({
+        active: true,
+        currentWindow: true
+      })
+
       if (!activeTab || !activeTab.id) {
-        throw new Error('无法获取当前标签页')
+        throw new Error("无法获取当前标签页")
       }
 
       // 检查当前页面是否是shipping-list页面
-      const currentUrl = activeTab.url || ''
-      if (!currentUrl.includes('seller.kuajingmaihuo.com') || !currentUrl.includes('/main/order-manager/shipping-list')) {
-        message.warning('请先打开发货单列表页面（shipping-list）')
+      const currentUrl = activeTab.url || ""
+      if (
+        !currentUrl.includes("seller.kuajingmaihuo.com") ||
+        !currentUrl.includes("/main/order-manager/shipping-list")
+      ) {
+        message.warning("请先打开发货单列表页面（shipping-list）")
         setLoading(false)
         return
       }
 
       // 获取表单值
       const values = form.getFieldsValue()
-      
+
       // 发送消息到content script，直接执行发货步骤
       const response = await chrome.tabs.sendMessage(activeTab.id, {
-        type: 'START_SHIPMENT_STEPS_DIRECTLY',
+        type: "START_SHIPMENT_STEPS_DIRECTLY",
         data: {
-          warehouse: values.warehouse || '义乌仓库',
-          shippingMethod: values.shippingMethod || '自送',
-          product: values.product || ''
+          warehouse: values.warehouse || "义乌仓库",
+          shippingMethod: values.shippingMethod || "自送",
+          product: values.product || ""
         }
       })
 
       if (response && response.success) {
-        message.success('已开始执行发货步骤')
+        message.success("已开始执行发货步骤")
       } else {
-        throw new Error('执行失败，未收到有效响应')
+        throw new Error("执行失败，未收到有效响应")
       }
     } catch (error: any) {
-      const errorMessage = error?.message || chrome.runtime.lastError?.message || '操作失败'
-      console.error('[Popup] 直接执行发货步骤失败:', error)
+      const errorMessage =
+        error?.message || chrome.runtime.lastError?.message || "操作失败"
+      console.error("[Popup] 直接执行发货步骤失败:", error)
       message.error(`操作失败: ${errorMessage}`)
     } finally {
       setLoading(false)
@@ -206,34 +234,41 @@ const PopupPage: React.FC = () => {
 
     try {
       // 获取当前活动标签页
-      const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true })
-      
+      const [activeTab] = await chrome.tabs.query({
+        active: true,
+        currentWindow: true
+      })
+
       if (!activeTab || !activeTab.id) {
-        throw new Error('无法获取当前标签页')
+        throw new Error("无法获取当前标签页")
       }
 
       // 检查当前页面是否是shipping-list页面
-      const currentUrl = activeTab.url || ''
-      if (!currentUrl.includes('seller.kuajingmaihuo.com') || !currentUrl.includes('/main/order-manager/shipping-list')) {
-        message.warning('请先打开发货单列表页面（shipping-list）')
+      const currentUrl = activeTab.url || ""
+      if (
+        !currentUrl.includes("seller.kuajingmaihuo.com") ||
+        !currentUrl.includes("/main/order-manager/shipping-list")
+      ) {
+        message.warning("请先打开发货单列表页面（shipping-list）")
         setLoading(false)
         return
       }
 
-      // 发送消息到content script，点击待仓库收货标签
+      // 发送消息到content script，点击待仓库收货标签（自动执行批量下载）
       const response = await chrome.tabs.sendMessage(activeTab.id, {
-        type: 'CLICK_WAREHOUSE_RECEIPT_TAB',
+        type: "CLICK_WAREHOUSE_RECEIPT_TAB",
         data: {}
       })
 
       if (response && response.success) {
-        message.success('已点击待仓库收货标签，等待页面加载...')
+        message.success("已启动批量下载，将逐个下载PDF文件...")
       } else {
-        throw new Error('执行失败，未收到有效响应')
+        throw new Error("执行失败，未收到有效响应")
       }
     } catch (error: any) {
-      const errorMessage = error?.message || chrome.runtime.lastError?.message || '操作失败'
-      console.error('[Popup] 点击待仓库收货标签失败:', error)
+      const errorMessage =
+        error?.message || chrome.runtime.lastError?.message || "操作失败"
+      console.error("[Popup] 点击待仓库收货标签失败:", error)
       message.error(`操作失败: ${errorMessage}`)
     } finally {
       setLoading(false)
@@ -250,9 +285,12 @@ const PopupPage: React.FC = () => {
 
     try {
       // 每次开始执行时，先清空之前保存的数据
-      console.log('[Popup] 清空之前保存的数据...')
-      await chrome.storage.local.remove(['shippingDeskData', 'shippingDeskDataRecordList'])
-      console.log('[Popup] 数据已清空')
+      console.log("[Popup] 清空之前保存的数据...")
+      await chrome.storage.local.remove([
+        "shippingDeskData",
+        "shippingDeskDataRecordList"
+      ])
+      console.log("[Popup] 数据已清空")
 
       // 发送消息到 background，保存配置并打开新窗口
       const response = await chrome.runtime.sendMessage({
@@ -273,11 +311,13 @@ const PopupPage: React.FC = () => {
       }
     } catch (error: any) {
       // 如果消息发送失败，可能是 background script 未加载，尝试直接打开窗口
-      const errorMessage = error?.message || chrome.runtime.lastError?.message || "操作失败"
-      const isConnectionError = errorMessage.includes("Could not establish connection") || 
-                                 errorMessage.includes("Extension context invalidated") ||
-                                 chrome.runtime.lastError
-      
+      const errorMessage =
+        error?.message || chrome.runtime.lastError?.message || "操作失败"
+      const isConnectionError =
+        errorMessage.includes("Could not establish connection") ||
+        errorMessage.includes("Extension context invalidated") ||
+        chrome.runtime.lastError
+
       if (isConnectionError) {
         try {
           await chrome.windows.create({
@@ -296,7 +336,9 @@ const PopupPage: React.FC = () => {
           message.success("页面已打开，配置已保存")
         } catch (directError: any) {
           console.error("[Popup] 直接打开窗口失败:", directError)
-          message.error(`无法打开页面: ${directError?.message || "请检查插件权限"}`)
+          message.error(
+            `无法打开页面: ${directError?.message || "请检查插件权限"}`
+          )
         }
       } else {
         console.error("[Popup] 批量自动发货失败:", error)
@@ -309,139 +351,132 @@ const PopupPage: React.FC = () => {
 
   return (
     <div className="w-[400px] p-4">
-        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
-          {/* 标题和设置按钮 */}
-          <div className="relative">
-            <div className="text-center">
-              <Title level={4} style={{ margin: 0 }}>
-                批量自动发货
-              </Title>
-            </div>
-            {/* 右上角设置按钮：用 onMouseDown 避免 popup 先关闭导致点击无反应 */}
-            <Button
-              type="text"
-              htmlType="button"
-              icon={<SettingOutlined />}
-              onMouseDown={handleOpenSettings}
-              style={{
-                position: "absolute",
-                top: 0,
-                right: 0,
-                padding: "4px 8px",
-                minWidth: 32,
-                minHeight: 32
-              }}
-              title="打开设置页面" />
+      <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+        {/* 标题和设置按钮 */}
+        <div className="relative">
+          <div className="text-center">
+            <Title level={4} style={{ margin: 0 }}>
+              批量自动发货
+            </Title>
           </div>
+          {/* 右上角设置按钮：用 onMouseDown 避免 popup 先关闭导致点击无反应 */}
+          <Button
+            type="text"
+            htmlType="button"
+            icon={<SettingOutlined />}
+            onMouseDown={handleOpenSettings}
+            style={{
+              position: "absolute",
+              top: 0,
+              right: 0,
+              padding: "4px 8px",
+              minWidth: 32,
+              minHeight: 32
+            }}
+            title="打开设置页面"
+          />
+        </div>
 
-          {/* 表单 */}
-          <Form
-            form={form}
-            layout="vertical"
-            onFinish={handleSubmit}
-            autoComplete="off"
-            initialValues={{
-              warehouse: "义乌仓库", // 默认选择义乌仓库
-              shippingMethod: "自送", // 默认选择自送方式
-              product: "" // 产品默认为空，需要用户选择
-            }}>
-            {/* 发货仓库选择 */}
-            <Form.Item
-              label="发货仓库"
-              name="warehouse"
-              rules={[
-                { required: true, message: "请选择发货仓库" }
-              ]}>
-              <Select
-                placeholder="请选择发货仓库"
-                size="large">
-                {warehouseOptions.map((option) => (
-                  <Option key={option.value} value={option.value}>
-                    {option.label}
-                  </Option>
-                ))}
-              </Select>
-            </Form.Item>
+        {/* 表单 */}
+        <Form
+          form={form}
+          layout="vertical"
+          onFinish={handleSubmit}
+          autoComplete="off"
+          initialValues={{
+            warehouse: "义乌仓库", // 默认选择义乌仓库
+            shippingMethod: "自送", // 默认选择自送方式
+            product: "" // 产品默认为空，需要用户选择
+          }}>
+          {/* 发货仓库选择 */}
+          <Form.Item
+            label="发货仓库"
+            name="warehouse"
+            rules={[{ required: true, message: "请选择发货仓库" }]}>
+            <Select placeholder="请选择发货仓库" size="large">
+              {warehouseOptions.map((option) => (
+                <Option key={option.value} value={option.value}>
+                  {option.label}
+                </Option>
+              ))}
+            </Select>
+          </Form.Item>
 
-            {/* 发货方式选择 */}
-            <Form.Item
-              label="发货方式"
-              name="shippingMethod"
-              rules={[
-                { required: true, message: "请选择发货方式" }
-              ]}>
-              <Select
-                placeholder="请选择发货方式"
-                size="large">
-                {SHIPPING_METHOD_OPTIONS.map((option) => (
-                  <Option key={option.value} value={option.value}>
-                    {option.label}
-                  </Option>
-                ))}
-              </Select>
-            </Form.Item>
+          {/* 发货方式选择 */}
+          <Form.Item
+            label="发货方式"
+            name="shippingMethod"
+            rules={[{ required: true, message: "请选择发货方式" }]}>
+            <Select placeholder="请选择发货方式" size="large">
+              {SHIPPING_METHOD_OPTIONS.map((option) => (
+                <Option key={option.value} value={option.value}>
+                  {option.label}
+                </Option>
+              ))}
+            </Select>
+          </Form.Item>
 
-            {/* 产品选择 */}
-            <Form.Item
-              label="产品"
-              name="product"
-              rules={[
-                { required: true, message: "请选择产品" }
-              ]}>
-              <Select
-                placeholder="请选择产品"
-                size="large"
-                showSearch
-                filterOption={(input, option) =>
-                  (option?.children as unknown as string)?.toLowerCase().includes(input.toLowerCase())
-                }>
-                {productOptions.map((option) => (
-                  <Option key={option.value} value={option.value}>
-                    {option.label}
-                  </Option>
-                ))}
-              </Select>
-            </Form.Item>
+          {/* 产品选择 */}
+          <Form.Item
+            label="产品"
+            name="product"
+            rules={[{ required: true, message: "请选择产品" }]}>
+            <Select
+              placeholder="请选择产品"
+              size="large"
+              showSearch
+              filterOption={(input, option) =>
+                (option?.children as unknown as string)
+                  ?.toLowerCase()
+                  .includes(input.toLowerCase())
+              }>
+              {productOptions.map((option) => (
+                <Option key={option.value} value={option.value}>
+                  {option.label}
+                </Option>
+              ))}
+            </Select>
+          </Form.Item>
 
-            {/* 提交按钮 */}
-            <Form.Item>
-              <Button
-                type="primary"
-                htmlType="submit"
-                icon={<SendOutlined />}
-                loading={loading}
-                block
-                size="large">
-                开始批量自动发货
-              </Button>
-            </Form.Item>
+          {/* 提交按钮 */}
+          <Form.Item>
+            <Button
+              type="primary"
+              htmlType="submit"
+              icon={<SendOutlined />}
+              loading={loading}
+              block
+              size="large">
+              开始批量自动发货
+            </Button>
+          </Form.Item>
 
-            {/* 直接执行发货步骤按钮（开发阶段测试用） */}
-            {/* 注意：这是开发阶段的功能，正式版本应该从第一步开始执行完整流程 */}
-            <Form.Item>
-              <Button
-                type="default"
-                onClick={handleDirectShipment}
-                loading={loading}
-                block
-                size="large">
-                直接执行发货步骤（开发测试用）
-              </Button>
-            </Form.Item>
+          {/* 直接执行发货步骤按钮（开发阶段测试用） */}
+          {/* 注意：这是开发阶段的功能，正式版本应该从第一步开始执行完整流程 */}
+          <Form.Item>
+            <Button
+              type="default"
+              onClick={handleDirectShipment}
+              loading={loading}
+              block
+              size="large">
+              直接执行发货步骤（开发测试用）
+            </Button>
+          </Form.Item>
 
-            {/* 待仓库收货测试按钮 */}
-            <Form.Item>
-              <Button
-                type="default"
-                onClick={handleTestWarehouseReceipt}
-                loading={loading}
-                block
-                size="large">
-                待仓库收货测试
-              </Button>
-            </Form.Item>
-          </Form>
-        </Space>
+          {/* 待仓库收货测试按钮 */}
+          <Form.Item>
+            <Button
+              type="default"
+              onClick={handleTestWarehouseReceipt}
+              loading={loading}
+              block
+              size="large">
+              待仓库收货测试
+            </Button>
+          </Form.Item>
+        </Form>
+      </Space>
     </div>
   )
 }

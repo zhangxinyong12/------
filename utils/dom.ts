@@ -4,6 +4,62 @@
  */
 
 /**
+ * Sleep函数
+ * 等待指定的毫秒数
+ * @param ms 等待的毫秒数
+ * @returns Promise
+ */
+export function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/**
+ * 查找包含特定文本的按钮
+ * 在指定选择器匹配的所有元素中，查找文本内容包含目标文本的元素
+ * @param selector CSS选择器
+ * @param text 目标文本
+ * @param options 配置选项
+ * @returns 找到的元素，如果超时则返回null
+ */
+export async function findButtonByText(
+  selector: string,
+  text: string,
+  options: {
+    timeout?: number
+    interval?: number
+    parent?: Element | Document
+  } = {}
+): Promise<HTMLElement | null> {
+  const { timeout = 10000, interval = 200, parent = document } = options
+
+  const startTime = Date.now()
+
+  return new Promise((resolve) => {
+    const checkElement = () => {
+      const elements = (parent as Element | Document).querySelectorAll(selector)
+
+      for (const element of Array.from(elements)) {
+        const elementText = element.textContent?.trim() || ""
+        if (elementText.includes(text)) {
+          resolve(element as HTMLElement)
+          return
+        }
+      }
+
+      const elapsed = Date.now() - startTime
+      if (elapsed >= timeout) {
+        resolve(null)
+        return
+      }
+
+      setTimeout(checkElement, interval)
+    }
+
+    checkElement()
+  })
+}
+
+/**
  * 查找DOM元素
  * 定时检查元素是否存在，直到找到或超时
  * @param selector CSS选择器或XPath表达式
