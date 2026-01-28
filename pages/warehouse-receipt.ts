@@ -18,7 +18,8 @@ function extractStockOrderNoFromRow(row: HTMLElement): string {
           'a[data-testid="beast-core-button-link"]'
         )
         if (stockOrderLink) {
-          const stockOrderNo = stockOrderLink.textContent?.trim() || ""
+          const stockOrderSpan = stockOrderLink.querySelector("span")
+          const stockOrderNo = stockOrderSpan?.textContent?.trim() || ""
           if (stockOrderNo) {
             return stockOrderNo
           }
