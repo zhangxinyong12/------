@@ -28,58 +28,6 @@ export const config: PlasmoCSConfig = {
   ]
 }
 
-let isPluginRunning = false
-
-export function setPluginRunningStatus(status: boolean): void {
-  isPluginRunning = status
-  updatePluginRunningStatusInMainWorld(status)
-  console.log("[Content] 已设置插件运行状态:", status ? "运行中" : "已停止")
-}
-
-function updatePluginRunningStatusInMainWorld(status: boolean): void {
-  const script = document.createElement("script")
-  script.textContent = `
-    (function() {
-      window.__douyinPluginRunning = ${status ? "true" : "false"};
-      console.log("[MAIN] 插件运行状态已更新: ${status ? "运行中" : "已停止"}");
-    })();
-  `
-  document.head.appendChild(script)
-  document.head.removeChild(script)
-}
-
-function injectPrintInterceptor(): void {
-  const script = document.createElement("script")
-  script.textContent = `
-    (function() {
-      if (window.__douyinPrintInterceptorSetup) {
-        console.log("[MAIN] 打印拦截器已设置，跳过");
-        return;
-      }
-
-      const originalPrint = window.print;
-      window.print = function(...args) {
-        if (window.__douyinPluginRunning) {
-          console.log("[MAIN] 插件运行中，拦截window.print()调用");
-          return;
-        }
-        console.log("[MAIN] 插件未运行，正常调用window.print()");
-        return originalPrint.apply(this, args);
-      };
-      console.log("[MAIN] window.print()拦截器已设置");
-      window.__douyinPrintInterceptorSetup = true;
-    })();
-  `
-  document.head.appendChild(script)
-  script.remove()
-}
-
-if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", injectPrintInterceptor)
-} else {
-  injectPrintInterceptor()
-}
-
 // 设置视口大小为1920x1080的效果
 // 通过设置meta viewport标签和CSS来实现
 function setViewportSize() {
@@ -116,12 +64,6 @@ function setViewportSize() {
 if (typeof chrome !== "undefined" && chrome.runtime) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     console.log("[Content] 收到来自popup/background的消息:", message.type)
-
-    if (message.type === "SET_PLUGIN_RUNNING_STATUS") {
-      setPluginRunningStatus(message.status)
-      sendResponse({ success: true })
-      return true
-    }
 
     if (message.type === "START_BATCH_SHIPMENT") {
       const executeTask = () => {
@@ -213,9 +155,7 @@ if (typeof chrome !== "undefined" && chrome.runtime) {
 
     if (message.type === "CLICK_WAREHOUSE_RECEIPT_TAB") {
       const executeTask = () => {
-        startBatchDownloadWithoutRefresh().finally(() => {
-          setPluginRunningStatus(false)
-        })
+        startBatchDownloadWithoutRefresh()
       }
 
       if (document.readyState === "complete") {
@@ -259,6 +199,7 @@ if (typeof chrome !== "undefined" && chrome.runtime) {
           }
 
           console.log("[Content] 点击'打印'按钮", printButton)
+
           printButton.click()
 
           await sleep(3000)

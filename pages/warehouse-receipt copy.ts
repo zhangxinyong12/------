@@ -3,7 +3,6 @@
  * 处理待仓库收货页面的操作，包括点击标签、打印商品打包标签等
  */
 
-import { setPluginRunningStatus } from "../content"
 import { findButtonByText, findDom, sleep } from "../utils/dom"
 
 function extractStockOrderNoFromRow(row: HTMLElement): string {
@@ -723,9 +722,6 @@ export async function startBatchDownloadWithoutRefresh() {
   )
 
   try {
-    await setPluginRunningStatus(true)
-    console.log("[WarehouseReceipt] 插件运行状态已设置为true")
-
     const tabLabels = document.querySelectorAll(
       'div[data-testid="beast-core-tab-itemLabel"]'
     )
@@ -751,7 +747,6 @@ export async function startBatchDownloadWithoutRefresh() {
 
     if (!targetTab) {
       console.error("[WarehouseReceipt] 未找到待仓库收货标签")
-      await setPluginRunningStatus(false)
       return false
     }
 
@@ -790,7 +785,6 @@ export async function startBatchDownloadWithoutRefresh() {
 
     if (Object.keys(tableData).length === 0) {
       console.warn("[WarehouseReceipt] 未找到表格数据")
-      await setPluginRunningStatus(false)
       return false
     }
 
@@ -827,13 +821,9 @@ export async function startBatchDownloadWithoutRefresh() {
 
     await chrome.storage.local.set({ batchDownloadData: null })
 
-    await setPluginRunningStatus(false)
-    console.log("[WarehouseReceipt] 插件运行状态已设置为false")
-
     return true
   } catch (error: any) {
     console.error("[WarehouseReceipt] 批量下载时发生错误:", error)
-    await setPluginRunningStatus(false)
     return false
   }
 }

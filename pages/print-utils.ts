@@ -7,7 +7,6 @@ import * as React from "react"
 import { createRoot, type Root } from "react-dom/client"
 
 import { PrintLabel } from "../components/PrintLabel"
-import { setPluginRunningStatus } from "../content"
 import { findButtonByText, findDom, sleep } from "../utils/dom"
 
 function setViewportSize() {
@@ -789,7 +788,6 @@ export async function continueShipmentSteps(config: {
   )
   console.log("[PrintUtils] 配置:", config)
 
-  setPluginRunningStatus(true)
   setViewportSize()
 
   try {
@@ -844,7 +842,6 @@ export async function continueShipmentSteps(config: {
   } catch (error: any) {
     console.error("[PrintUtils] 继续执行发货步骤时发生错误:", error)
   } finally {
-    setPluginRunningStatus(false)
   }
 }
 
@@ -857,7 +854,6 @@ export async function executeShipmentStepsDirectly(config: {
   )
   console.log("[PrintUtils] 配置:", config)
 
-  setPluginRunningStatus(true)
   setViewportSize()
 
   try {
@@ -1062,6 +1058,5 @@ export async function executeShipmentStepsDirectly(config: {
   } catch (error: any) {
     console.error("[PrintUtils] 直接执行发货步骤时发生错误:", error)
   } finally {
-    setPluginRunningStatus(false)
   }
 }
