@@ -3,7 +3,6 @@
  * 处理批量发货页面的操作，包括表格数据提取、批量发货执行等
  */
 
-import { setPluginRunningStatus } from "../content"
 import { findButtonByText, findDom, sleep } from "../utils/dom"
 
 interface TableRowData {
@@ -224,8 +223,6 @@ export async function startShippingDeskTasks(config: {
   console.log("[BatchShipment] ============== 开始发货台任务 =============")
   console.log("[BatchShipment] 配置:", config)
 
-  setPluginRunningStatus(true)
-
   try {
     const paginationElement = await findDom(
       'ul[data-testid="beast-core-pagination"]',
@@ -236,7 +233,6 @@ export async function startShippingDeskTasks(config: {
     )
 
     if (!paginationElement) {
-      setPluginRunningStatus(false)
       return
     }
 
@@ -245,7 +241,6 @@ export async function startShippingDeskTasks(config: {
     const tableData = extractTableData()
 
     if (tableData.length === 0) {
-      setPluginRunningStatus(false)
       return
     }
 
@@ -263,7 +258,6 @@ export async function startShippingDeskTasks(config: {
     )
 
     if (filteredTableData.length === 0) {
-      setPluginRunningStatus(false)
       return
     }
 
@@ -334,7 +328,6 @@ export async function startShippingDeskTasks(config: {
   } catch (error: any) {
     console.error("[BatchShipment] 执行发货台任务时发生错误:", error)
   } finally {
-    setPluginRunningStatus(false)
   }
 }
 
@@ -347,12 +340,9 @@ export async function startBatchTasks(config: {
     config
   )
 
-  setPluginRunningStatus(true)
-
   try {
     console.log("[BatchShipment] 批量发货任务执行完成")
   } finally {
-    setPluginRunningStatus(false)
   }
 }
 

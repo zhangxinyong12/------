@@ -1,11 +1,9 @@
-import { setPluginRunningStatus } from "../content"
 import { findButtonByText, findDom, sleep } from "../utils/dom"
 
 export async function executeShipmentProcess(
   warehouse: string,
   shippingMethod: string
 ): Promise<boolean> {
-  setPluginRunningStatus(true)
 
   try {
     console.log(
@@ -51,8 +49,6 @@ export async function executeShipmentProcess(
   } catch (error: any) {
     console.error("[ShippingProcess] 执行发货流程时发生错误:", error)
     return false
-  } finally {
-    setPluginRunningStatus(false)
   }
 }
 
