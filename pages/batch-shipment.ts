@@ -275,6 +275,51 @@ async function refreshTable() {
   }
 }
 
+async function selectFirstOrder(stockOrderNo: string) {
+  console.log(`[BatchShipment] 勾选订单: ${stockOrderNo}`)
+
+  try {
+    const checkbox = document.querySelector(
+      `tbody[data-testid="beast-core-table-middle-tbody"]
+      tr[data-testid="beast-core-table-body-tr"]  td
+      div[data-testid="beast-core-checkbox-checkIcon"]`
+    ) as HTMLDivElement
+    console.log(checkbox)
+    if (!checkbox) {
+      console.error(`[BatchShipment] 未找到订单: ${stockOrderNo}`)
+      return false
+    }
+    checkbox.click()
+
+    return false
+  } catch (error: any) {
+    console.error("[BatchShipment] 勾选订单时发生错误:", error)
+    return false
+  }
+}
+
+async function clickFirstPopupButton() {
+  console.log("[BatchShipment] 查找并点击弹窗第一个按钮...")
+  try {
+    const button = document.querySelector(
+      'div[data-testid="beast-core-modal"] button[data-testid="beast-core-button"]'
+    ) as HTMLElement
+
+    if (!button) {
+      console.error("[BatchShipment] 未找到弹窗按钮")
+      return false
+    }
+
+    button.click()
+    console.log("[BatchShipment] 已点击弹窗第一个按钮")
+    await sleep(1000)
+    return true
+  } catch (error: any) {
+    console.error("[BatchShipment] 点击弹窗按钮时发生错误:", error)
+    return false
+  }
+}
+
 async function selectOrdersByWarehouse(
   warehouse: string,
   rows: TableRowData[]
@@ -363,6 +408,55 @@ async function clickCreateShippingOrderButton() {
   }
 }
 
+async function selectWarehouse(warehouse: string) {
+  console.log(`[BatchShipment] 选择仓库: ${warehouse}...`)
+
+  try {
+    const inputs = document.querySelectorAll(
+      'input[data-testid="beast-core-select-htmlInput"]'
+    ) as NodeListOf<HTMLInputElement>
+    if (!inputs.length) {
+      console.error("[BatchShipment] 未找到批量选择弹窗")
+      return false
+    }
+    inputs[1].click()
+    await sleep(1000)
+
+    const portal = document.querySelector(
+      'div[data-testid="beast-core-portal-main"]'
+    )
+    if (!portal) {
+      console.error("[BatchShipment] 未找到仓库选择弹窗容器")
+      return false
+    }
+
+    const listbox = portal.querySelector('ul[role="listbox"]')
+    if (!listbox) {
+      console.error("[BatchShipment] 未找到仓库列表")
+      return false
+    }
+
+    const options = listbox.querySelectorAll(
+      'li[role="option"]'
+    ) as NodeListOf<HTMLLIElement>
+    for (const option of options) {
+      const span = option.querySelector("span")
+      if (span && span.textContent === warehouse) {
+        option.click()
+        console.log(`[BatchShipment] 已选择仓库: ${warehouse}`)
+        await sleep(1000)
+        return true
+      }
+    }
+
+    console.warn(`[BatchShipment] 未找到匹配的仓库: ${warehouse}`)
+    return false
+  } catch (error: any) {
+    console.error("[BatchShipment] 选择仓库时发生错误:", error)
+    return false
+  }
+}
+
 async function handleCreateShippingOrderPage(warehouse: string) {
   console.log("[BatchShipment] 处理创建发货单页面...")
 
@@ -390,6 +484,12 @@ async function handleCreateShippingOrderPage(warehouse: string) {
     await sleep(1500)
 
     console.log("[BatchShipment] 步骤3: 选择仓库...")
+    if (!(await selectWarehouse(warehouse))) {
+      console.error("[BatchShipment] 选择仓库失败")
+      return false
+    }
+
+    console.log("[BatchShipment] 步骤4: 点击确认...")
     const modalWrapper = document.querySelector(
       'div[data-testid="beast-core-modal-innerWrapper"]'
     )
@@ -398,25 +498,6 @@ async function handleCreateShippingOrderPage(warehouse: string) {
       return false
     }
 
-    const radioInputs = modalWrapper.querySelectorAll(
-      'input[type="radio"], input[type="checkbox"]'
-    )
-
-    for (const radio of Array.from(radioInputs)) {
-      const label = radio.closest("label")?.textContent || ""
-      const text = label.trim()
-
-      if (text.includes(warehouse)) {
-        console.log(`[BatchShipment] 找到匹配的仓库选项: ${text}`)
-        if (radio instanceof HTMLElement) {
-          radio.click()
-        }
-        await sleep(500)
-        break
-      }
-    }
-
-    console.log("[BatchShipment] 步骤4: 点击确认...")
     const confirmButton = await findButtonByText(
       'button[data-testid="beast-core-button"]',
       "确认",
@@ -480,7 +561,7 @@ async function handleShippingListPage(shippingMethod: string) {
     console.log("[BatchShipment] 步骤1: 等待页面加载...")
     await sleep(2000)
 
-    console.log("[BatchShipment] 步骤2: 刷新表格...")
+    console.log("[BatchShipment] 步骤2: 刷新表格1111111...")
     await refreshTable()
     await sleep(1000)
 
@@ -688,7 +769,7 @@ async function waitForPageNavigation(
     checkUrl()
   })
 }
-
+// TODO
 // 开始发货台完整流程
 export async function startShippingDeskTasks(config: {
   warehouse: string
@@ -712,14 +793,12 @@ export async function startShippingDeskTasks(config: {
       console.error("[BatchShipment] 页面加载超时")
       return
     }
-
-    console.log("[BatchShipment] 步骤2: 刷新表格...")
-    await refreshTable()
+    await sleep(1000 * 5)
 
     console.log("[BatchShipment] 步骤3: 提取表格数据...")
     await sleep(1000)
     const tableData = extractTableData()
-
+    console.log(tableData)
     if (tableData.length === 0) {
       console.warn("[BatchShipment] 未找到表格数据")
       return
@@ -727,38 +806,7 @@ export async function startShippingDeskTasks(config: {
 
     console.log(`[BatchShipment] 共找到 ${tableData.length} 条数据`)
 
-    console.log("[BatchShipment] 步骤4: 过滤已发货订单...")
-    const stockOrderNos = tableData.map((row) => row.stockOrderNo)
-    const checkResult = await chrome.runtime.sendMessage({
-      type: "CHECK_STOCK_ORDER_SHIPPED",
-      data: {
-        stockOrderNos
-      }
-    })
-
-    const unshippedOrderNos = new Set(checkResult.data?.notShipped || [])
-    const filteredTableData = tableData.filter((row) =>
-      unshippedOrderNos.has(row.stockOrderNo)
-    )
-
-    console.log(
-      `[BatchShipment] 过滤后剩余 ${filteredTableData.length} 条未发货数据`
-    )
-
-    if (filteredTableData.length === 0) {
-      console.log("[BatchShipment] 所有订单已发货，无需处理")
-      return
-    }
-
-    console.log("[BatchShipment] 步骤5: 按仓库和产品分组数据...")
-    const groupedData = groupDataByWarehouseAndProduct(
-      filteredTableData,
-      config.product
-    )
-    const groups = Object.keys(groupedData)
-    console.log(`[BatchShipment] 共 ${groups.length} 个分组需要处理`)
-
-    console.log("[BatchShipment] 步骤6: 保存数据...")
+    console.log("[BatchShipment] 步骤4: 保存数据到后台...")
     const shopName = getShopName()
     const baseFolder = getTodayDateString()
     const finalShopName = shopName || "未知店铺"
@@ -769,64 +817,102 @@ export async function startShippingDeskTasks(config: {
         baseFolder,
         shopName: finalShopName,
         product: config.product,
-        groupedData: Object.keys(groupedData)
-          .map((key) => {
-            const [warehouse] = key.split("|")
-            return {
-              warehouse,
-              product: config.product,
-              rows: groupedData[key].map((row) => ({
-                stockOrderNo: row.stockOrderNo,
-                productCode: row.productCode,
-                warehouse: row.warehouse,
-                skuId: row.skuId,
-                quantity: row.quantity
-              }))
-            }
-          })
-          .filter((item) => item.rows.length > 0)
+        tableData: tableData.map((row) => ({
+          stockOrderNo: row.stockOrderNo,
+          productCode: row.productCode,
+          warehouse: row.warehouse,
+          skuId: row.skuId,
+          quantity: row.quantity
+        }))
       }
     })
 
     console.log("[BatchShipment] 数据保存结果:", saveResult)
 
-    console.log("[BatchShipment] 步骤7: 开始按仓库处理发货流程...")
+    console.log("[BatchShipment] 步骤5: 开始逐条处理订单...")
 
-    for (const key of groups) {
-      const [warehouse] = key.split("|")
-      const rows = groupedData[key]
+    let processedCount = 0
+    while (true) {
+      await sleep(2000)
 
       console.log(
-        `[BatchShipment] 开始处理仓库: ${warehouse}，共 ${rows.length} 条订单`
+        `[BatchShipment] ========== 开始处理第 ${processedCount + 1} 条订单 ==========`
       )
 
-      // console.log("[BatchShipment] 步骤7.1: 刷新表格...")
-      // await refreshTable()
-      // await sleep(1000)
+      console.log("[BatchShipment] 提取当前表格数据...")
+      const currentTableData = extractTableData()
 
-      console.log("[BatchShipment] 步骤7.2: 勾选同仓库订单...")
-      await selectOrdersByWarehouse(warehouse, rows)
+      if (currentTableData.length === 0) {
+        console.log("[BatchShipment] 表格已无数据，处理完成")
+        break
+      }
+
+      console.log(
+        `[BatchShipment] 当前表格有 ${currentTableData.length} 条数据`
+      )
+
+      const firstOrder = currentTableData[0]
+      console.log(`[BatchShipment] 处理订单: ${firstOrder.stockOrderNo}`)
+
+      console.log("[BatchShipment] 勾选第一条订单...")
+      await selectFirstOrder(firstOrder.stockOrderNo)
       await sleep(1000)
 
-      console.log("[BatchShipment] 步骤7.3: 点击创建发货单...")
+      console.log("[BatchShipment] 点击创建发货单...")
       await clickCreateShippingOrderButton()
 
-      console.log("[BatchShipment] 步骤7.4: 处理创建发货单页面...")
+      console.log("[BatchShipment] 等待5秒...")
+      await sleep(1000 * 3)
+
+      console.log("[BatchShipment] 点击弹窗第一个按钮...")
+      await clickFirstPopupButton()
+      await sleep(1000 * 3)
+      // 根据用户的选择发货仓库
+      await selectWarehouse(config.warehouse)
+      await sleep(1000 * 1)
+      // 点击确认创建
+      const createButton = (await findButtonByText(
+        'button[data-testid="beast-core-button"]',
+        "确认创建",
+        {
+          timeout: 10000,
+          interval: 200
+        }
+      )) as HTMLElement
+
+      if (!createButton) {
+        console.error("[BatchShipment] 确认创建按钮未找到")
+        return
+      }
+      createButton.click()
+      await sleep(1000 * 1)
+      const createButton2 = (await findButtonByText(
+        'button[data-testid="beast-core-button"]',
+        "继续创建，已确认一致",
+        {
+          timeout: 10000,
+          interval: 200
+        }
+      )) as HTMLElement
+
+      if (!createButton2) {
+        console.error("[createButton2] 确认创建按钮未找到")
+        return
+      }
+      createButton2.click()
+      console.log("[BatchShipment] 处理创建发货单页面...")
       await handleCreateShippingOrderPage(config.warehouse)
 
-      console.log("[BatchShipment] 步骤7.5: 等待跳转到发货列表...")
+      console.log("[BatchShipment] 等待跳转到发货列表...")
       await waitForPageNavigation(
         "https://seller.kuajingmaihuo.com/main/order-manager/shipping-list",
         15000
       )
 
-      console.log("[BatchShipment] 步骤7.6: 处理发货列表页面...")
+      console.log("[BatchShipment] 处理发货列表页面...")
       await handleShippingListPage(config.shippingMethod)
 
-      console.log(
-        `[BatchShipment] 仓库 ${warehouse} 处理完成，准备返回发货台处理下一个仓库...`
-      )
-
+      console.log("[BatchShipment] 返回发货台...")
       await chrome.runtime.sendMessage({
         type: "NAVIGATE_TO_SHIPPING_DESK",
         data: {
@@ -835,6 +921,7 @@ export async function startShippingDeskTasks(config: {
       })
 
       await sleep(3000)
+      processedCount++
     }
 
     console.log(

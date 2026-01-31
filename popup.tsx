@@ -430,6 +430,69 @@ const PopupPage: React.FC = () => {
   }
 
   /**
+   * 测试按钮：在当前窗口跳转到发货台页面并执行函数
+   */
+  const handleTestShippingDesk = async () => {
+    setLoading(true)
+
+    try {
+      const values = form.getFieldsValue()
+
+      // 获取当前活动标签页
+      const [activeTab] = await chrome.tabs.query({
+        active: true,
+        currentWindow: true
+      })
+
+      if (!activeTab || !activeTab.id) {
+        throw new Error("无法获取当前标签页")
+      }
+
+      // 先跳转到发货台页面
+      await chrome.tabs.update(activeTab.id, {
+        url: "https://seller.kuajingmaihuo.com/main/order-manager/shipping-desk"
+      })
+
+      // 等待页面加载完成
+      await new Promise((resolve) => {
+        const checkLoaded = () => {
+          chrome.tabs.get(activeTab.id!, (tab) => {
+            if (tab.status === "complete") {
+              resolve(true)
+            } else {
+              setTimeout(checkLoaded, 500)
+            }
+          })
+        }
+        setTimeout(checkLoaded, 1000)
+      })
+
+      // 发送消息到 content script 执行函数
+      const response = await chrome.tabs.sendMessage(activeTab.id, {
+        type: "START_SHIPPING_DESK_TASK",
+        data: {
+          warehouse: values.warehouse || "义乌仓库",
+          shippingMethod: values.shippingMethod || "自送",
+          product: values.product || "0.2亚克力"
+        }
+      })
+
+      if (response && response.success) {
+        message.success("已在当前窗口执行发货台任务...")
+      } else {
+        throw new Error("执行失败，未收到有效响应")
+      }
+    } catch (error: any) {
+      const errorMessage =
+        error?.message || chrome.runtime.lastError?.message || "操作失败"
+      console.error("[Popup] 测试发货台任务失败:", error)
+      message.error(`操作失败: ${errorMessage}`)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  /**
    * 处理表单提交
    * 开始批量自动发货
    * 保存用户配置到 background，并打开新窗口
@@ -601,6 +664,18 @@ const PopupPage: React.FC = () => {
               block
               size="large">
               自动发货
+            </Button>
+          </Form.Item>
+
+          {/* 测试按钮 */}
+          <Form.Item>
+            <Button
+              type="default"
+              onClick={handleTestShippingDesk}
+              loading={loading}
+              block
+              size="large">
+              测试发货台（当前窗口）
             </Button>
           </Form.Item>
         </Form>
