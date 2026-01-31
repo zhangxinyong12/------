@@ -1,74 +1,19 @@
 /**
  * 打印工具函数
- * 包含打印相关的所有功能：打印接口拦截、打印标签生成、发货流程等
+ * 包含打印相关的所有功能：打印标签生成、发货流程等
  */
 
 import * as React from "react"
 import { createRoot, type Root } from "react-dom/client"
 
 import { PrintLabel } from "../components/PrintLabel"
+import { setPluginRunningStatus } from "../content"
 import { findButtonByText, findDom, sleep } from "../utils/dom"
 
 function setViewportSize() {
   if (typeof window !== "undefined" && window.innerWidth < 1280) {
     window.resizeTo(1280, 800)
   }
-}
-
-export function interceptPrintAPI(): Promise<void> {
-  console.log("[PrintUtils] 开始设置打印接口拦截监听器...")
-
-  if ((window as any).__printAPIListenerSetup) {
-    console.log("[PrintUtils] 打印接口监听器已设置，跳过")
-    return Promise.resolve()
-  }
-
-  ;(window as any).__printAPIListenerSetup = true
-
-  chrome.runtime
-    .sendMessage({
-      type: "INJECT_PRINT_INTERCEPTOR"
-    })
-    .then((response) => {
-      if (response && response.success) {
-        console.log("[PrintUtils] 打印接口拦截脚本注入成功")
-      } else {
-        console.error("[PrintUtils] 打印接口拦截脚本注入失败:", response)
-      }
-    })
-    .catch((error) => {
-      console.error("[PrintUtils] 请求注入打印接口拦截脚本失败:", error)
-    })
-
-  window.addEventListener("message", async (event) => {
-    if (
-      event.data &&
-      event.data.type === "PRINT_API_RESPONSE" &&
-      event.data.source === "injected-script"
-    ) {
-      console.log("[PrintUtils] 收到打印接口响应:", event.data.data)
-
-      try {
-        const printData = event.data.data
-
-        await chrome.storage.local.set({
-          lastPrintData: {
-            url: printData.url,
-            data: printData.data,
-            timestamp: printData.timestamp
-          }
-        })
-
-        console.log("[PrintUtils] 打印数据已保存，等待打印预览窗口打开...")
-        ;(window as any).__hasPrintData = true
-      } catch (error: any) {
-        console.error("[PrintUtils] 处理打印接口响应失败:", error)
-      }
-    }
-  })
-
-  console.log("[PrintUtils] 打印接口拦截监听器已设置")
-  return Promise.resolve()
 }
 
 async function generatePDF(element: HTMLElement, fileName: string) {
@@ -844,6 +789,7 @@ export async function continueShipmentSteps(config: {
   )
   console.log("[PrintUtils] 配置:", config)
 
+  setPluginRunningStatus(true)
   setViewportSize()
 
   try {
@@ -897,6 +843,8 @@ export async function continueShipmentSteps(config: {
     console.log("[PrintUtils] ============== 发货步骤执行完成 =============")
   } catch (error: any) {
     console.error("[PrintUtils] 继续执行发货步骤时发生错误:", error)
+  } finally {
+    setPluginRunningStatus(false)
   }
 }
 
@@ -909,6 +857,7 @@ export async function executeShipmentStepsDirectly(config: {
   )
   console.log("[PrintUtils] 配置:", config)
 
+  setPluginRunningStatus(true)
   setViewportSize()
 
   try {
@@ -1112,5 +1061,7 @@ export async function executeShipmentStepsDirectly(config: {
     }
   } catch (error: any) {
     console.error("[PrintUtils] 直接执行发货步骤时发生错误:", error)
+  } finally {
+    setPluginRunningStatus(false)
   }
 }

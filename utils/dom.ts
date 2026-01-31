@@ -15,9 +15,9 @@ export function sleep(ms: number): Promise<void> {
 
 /**
  * 查找包含特定文本的按钮
- * 在指定选择器匹配的所有元素中，查找文本内容包含目标文本的元素
+ * 在指定选择器匹配的所有元素中，查找文本内容完全匹配目标文本的元素
  * @param selector CSS选择器
- * @param text 目标文本
+ * @param text 目标文本 （完全匹配）
  * @param options 配置选项
  * @returns 找到的元素，如果超时则返回null
  */
@@ -40,7 +40,7 @@ export async function findButtonByText(
 
       for (const element of Array.from(elements)) {
         const elementText = element.textContent?.trim() || ""
-        if (elementText.includes(text)) {
+        if (elementText === text) {
           resolve(element as HTMLElement)
           return
         }

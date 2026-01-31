@@ -186,10 +186,20 @@ const PopupPage: React.FC = () => {
         throw new Error("无法获取当前标签页")
       }
 
-      // 检查当前页面是否是shipping-list页面
+      // 检查当前页面是否是支持的网站
       const currentUrl = activeTab.url || ""
+      const isTemuSite = currentUrl.includes("agentseller.temu.com")
+      const isKuajingSite = currentUrl.includes("seller.kuajingmaihuo.com")
+
+      if (!isTemuSite && !isKuajingSite) {
+        message.warning("请在 Temu 或 抖音跨境商城 页面上使用此功能")
+        setLoading(false)
+        return
+      }
+
+      // 对于抖音跨境商城，检查是否是shipping-list页面
       if (
-        !currentUrl.includes("seller.kuajingmaihuo.com") ||
+        isKuajingSite &&
         !currentUrl.includes("/main/order-manager/shipping-list")
       ) {
         message.warning("请先打开发货单列表页面（shipping-list）")
@@ -254,11 +264,38 @@ const PopupPage: React.FC = () => {
         return
       }
 
-      // 发送消息到content script，点击待仓库收货标签（自动执行批量下载）
-      const response = await chrome.tabs.sendMessage(activeTab.id, {
-        type: "CLICK_WAREHOUSE_RECEIPT_TAB",
-        data: {}
-      })
+      // 尝试发送消息，带重试机制
+      let response = null
+      const maxRetries = 3
+      const retryDelay = 1000
+
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          console.log(`[Popup] 尝试发送消息 (第 ${attempt} 次)...`)
+          response = await chrome.tabs.sendMessage(activeTab.id, {
+            type: "CLICK_WAREHOUSE_RECEIPT_TAB",
+            data: {}
+          })
+          console.log("[Popup] 收到响应:", response)
+          break
+        } catch (sendMessageError: any) {
+          const errorMessage = sendMessageError?.message || ""
+          const isConnectionError =
+            errorMessage.includes("Could not establish connection") ||
+            errorMessage.includes("Receiving end does not exist") ||
+            errorMessage.includes("Extension context invalidated")
+
+          if (isConnectionError && attempt < maxRetries) {
+            console.warn(
+              `[Popup] 消息发送失败 (第 ${attempt} 次)，${retryDelay}ms 后重试...`
+            )
+            await new Promise((resolve) => setTimeout(resolve, retryDelay))
+            continue
+          } else {
+            throw sendMessageError
+          }
+        }
+      }
 
       if (response && response.success) {
         message.success("已启动批量下载，将逐个下载PDF文件...")
@@ -269,6 +306,82 @@ const PopupPage: React.FC = () => {
       const errorMessage =
         error?.message || chrome.runtime.lastError?.message || "操作失败"
       console.error("[Popup] 点击待仓库收货标签失败:", error)
+      message.error(`操作失败: ${errorMessage}`)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  /**
+   * 测试打印条码功能
+   * 点击"打印商品条码"链接，然后点击"打印"按钮，检查是否有系统弹窗
+   */
+  const handleTestPrintBarcode = async () => {
+    setLoading(true)
+
+    try {
+      const [activeTab] = await chrome.tabs.query({
+        active: true,
+        currentWindow: true
+      })
+
+      if (!activeTab || !activeTab.id) {
+        throw new Error("无法获取当前标签页")
+      }
+
+      // 检查当前页面是否是支持的网站
+      const currentUrl = activeTab.url || ""
+      const isTemuSite = currentUrl.includes("agentseller.temu.com")
+      const isKuajingSite = currentUrl.includes("seller.kuajingmaihuo.com")
+
+      if (!isTemuSite && !isKuajingSite) {
+        message.warning("请在 Temu 或 抖音跨境商城 页面上使用此功能")
+        setLoading(false)
+        return
+      }
+
+      // 尝试发送消息，带重试机制
+      let response = null
+      const maxRetries = 3
+      const retryDelay = 1000
+
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          console.log(`[Popup] 尝试发送消息 (第 ${attempt} 次)...`)
+          response = await chrome.tabs.sendMessage(activeTab.id, {
+            type: "TEST_PRINT_BARCODE",
+            data: {}
+          })
+          console.log("[Popup] 收到响应:", response)
+          break
+        } catch (sendMessageError: any) {
+          const errorMessage = sendMessageError?.message || ""
+          const isConnectionError =
+            errorMessage.includes("Could not establish connection") ||
+            errorMessage.includes("Receiving end does not exist") ||
+            errorMessage.includes("Extension context invalidated")
+
+          if (isConnectionError && attempt < maxRetries) {
+            console.warn(
+              `[Popup] 消息发送失败 (第 ${attempt} 次)，${retryDelay}ms 后重试...`
+            )
+            await new Promise((resolve) => setTimeout(resolve, retryDelay))
+            continue
+          } else {
+            throw sendMessageError
+          }
+        }
+      }
+
+      if (response && response.success) {
+        message.success("测试已完成，请检查控制台日志")
+      } else {
+        throw new Error("执行失败，未收到有效响应")
+      }
+    } catch (error: any) {
+      const errorMessage =
+        error?.message || chrome.runtime.lastError?.message || "操作失败"
+      console.error("[Popup] 测试打印条码失败:", error)
       message.error(`操作失败: ${errorMessage}`)
     } finally {
       setLoading(false)
@@ -473,6 +586,18 @@ const PopupPage: React.FC = () => {
               block
               size="large">
               待仓库收货测试
+            </Button>
+          </Form.Item>
+
+          {/* 测试打印条码按钮 */}
+          <Form.Item>
+            <Button
+              type="default"
+              onClick={handleTestPrintBarcode}
+              loading={loading}
+              block
+              size="large">
+              测试打印条码
             </Button>
           </Form.Item>
         </Form>

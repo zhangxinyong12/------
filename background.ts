@@ -216,40 +216,40 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true // 保持消息通道开放以支持异步响应
   }
 
-  // 处理注入打印接口拦截脚本的请求
-  if (message.type === "INJECT_PRINT_INTERCEPTOR") {
-    handleInjectPrintInterceptor(sender.tab?.id)
+  // 处理测试打印条码的请求（转发到当前活动标签页的content script）
+  if (message.type === "TEST_PRINT_BARCODE") {
+    handleForwardToActiveTab("TEST_PRINT_BARCODE", message.data)
       .then((result) => {
-        sendResponse({ success: true, data: result })
+        sendResponse(result)
       })
       .catch((error) => {
-        console.error("[Background] 注入打印拦截脚本错误:", error)
+        console.error("[Background] 测试打印条码错误:", error)
         sendResponse({ success: false, error: error.message })
       })
     return true // 保持消息通道开放以支持异步响应
   }
 
-  // 处理开始批量下载的请求
-  if (message.type === "START_BATCH_DOWNLOAD") {
-    handleStartBatchDownload(sender.tab?.id, message.data)
+  // 处理直接执行发货步骤的请求（转发到当前活动标签页的content script）
+  if (message.type === "START_SHIPMENT_STEPS_DIRECTLY") {
+    handleForwardToActiveTab("START_SHIPMENT_STEPS_DIRECTLY", message.data)
       .then((result) => {
-        sendResponse({ success: true, data: result })
+        sendResponse(result)
       })
       .catch((error) => {
-        console.error("[Background] 开始批量下载错误:", error)
+        console.error("[Background] 直接执行发货步骤错误:", error)
         sendResponse({ success: false, error: error.message })
       })
     return true // 保持消息通道开放以支持异步响应
   }
 
-  // 处理处理下一行的请求
-  if (message.type === "PROCESS_NEXT_ROW") {
-    handleProcessNextRow(sender.tab?.id, message.data)
+  // 处理点击待仓库收货标签的请求（转发到当前活动标签页的content script）
+  if (message.type === "CLICK_WAREHOUSE_RECEIPT_TAB") {
+    handleForwardToActiveTab("CLICK_WAREHOUSE_RECEIPT_TAB", message.data)
       .then((result) => {
-        sendResponse({ success: true, data: result })
+        sendResponse(result)
       })
       .catch((error) => {
-        console.error("[Background] 处理下一行错误:", error)
+        console.error("[Background] 点击待仓库收货标签错误:", error)
         sendResponse({ success: false, error: error.message })
       })
     return true // 保持消息通道开放以支持异步响应
@@ -1354,322 +1354,90 @@ async function getBatchPrintData(): Promise<any | null> {
 }
 
 /**
- * 注入打印接口拦截脚本到页面上下文
- * 使用chrome.scripting.executeScript将脚本注入到页面上下文中
- * @param tabId 标签页ID
+ * 转发消息到当前活动标签页的content script，带重试机制
+ * @param messageType 消息类型
+ * @param data 消息数据
+ * @returns content script的响应
  */
-async function handleInjectPrintInterceptor(
-  tabId: number | undefined
-): Promise<{
-  success: boolean
-  message: string
-}> {
+async function handleForwardToActiveTab(
+  messageType: string,
+  data: any
+): Promise<any> {
   try {
-    if (!tabId) {
-      throw new Error("无法获取标签页ID")
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true })
+
+    if (!tabs || tabs.length === 0) {
+      throw new Error("未找到活动标签页")
     }
 
-    console.log(`[Background] 开始注入打印接口拦截脚本，标签页ID: ${tabId}`)
+    const activeTab = tabs[0]
 
-    // 定义注入到页面上下文的函数
-    // 这个函数会在页面上下文中执行，可以访问页面的window.fetch和window.print
-    const injectInterceptor = () => {
-      // 插件运行状态标记
-      let isPluginRunning = false
+    if (!activeTab.id) {
+      throw new Error("活动标签页ID无效")
+    }
 
-      // 监听来自content script的消息，更新插件运行状态
-      window.addEventListener("message", (event) => {
-        if (event.source !== window) return
+    const currentUrl = activeTab.url || ""
+    const isTemuSite = currentUrl.includes("agentseller.temu.com")
+    const isKuajingSite = currentUrl.includes("seller.kuajingmaihuo.com")
 
-        if (event.data.type === "SET_PLUGIN_RUNNING_STATUS") {
-          isPluginRunning = event.data.status
-          console.log(
-            "[Injected] 插件运行状态已更新:",
-            isPluginRunning ? "运行中" : "已停止"
+    if (messageType === "START_SHIPMENT_STEPS_DIRECTLY") {
+      if (!isTemuSite && !isKuajingSite) {
+        throw new Error("请在 Temu 或 抖音跨境商城 页面上使用此功能")
+      }
+      if (
+        isKuajingSite &&
+        !currentUrl.includes("/main/order-manager/shipping-list")
+      ) {
+        throw new Error("请先打开发货单列表页面（shipping-list）")
+      }
+    }
+
+    if (messageType === "CLICK_WAREHOUSE_RECEIPT_TAB") {
+      if (
+        !currentUrl.includes("seller.kuajingmaihuo.com") ||
+        !currentUrl.includes("/main/order-manager/shipping-list")
+      ) {
+        throw new Error("请先打开发货单列表页面（shipping-list）")
+      }
+    }
+
+    console.log(`[Background] 转发消息到标签页 ${activeTab.id}: ${messageType}`)
+
+    const maxRetries = 5
+    const retryDelay = 1000
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const response = await chrome.tabs.sendMessage(activeTab.id, {
+          type: messageType,
+          data: data
+        })
+        console.log(`[Background] 收到标签页响应:`, response)
+        return response
+      } catch (sendMessageError: any) {
+        const errorMessage = sendMessageError?.message || ""
+        const isConnectionError =
+          errorMessage.includes("Could not establish connection") ||
+          errorMessage.includes("Receiving end does not exist") ||
+          errorMessage.includes("Extension context invalidated")
+
+        if (isConnectionError && attempt < maxRetries) {
+          console.warn(
+            `[Background] 消息发送失败 (第 ${attempt} 次)，${retryDelay}ms 后重试...`
           )
+          await new Promise((resolve) => setTimeout(resolve, retryDelay))
+        } else {
+          throw sendMessageError
         }
-      })
-
-      // 拦截window.print()，根据插件运行状态决定是否拦截
-      if (!(window as any).__windowPrintIntercepted) {
-        const originalPrint = window.print
-        window.print = function (...args) {
-          if (isPluginRunning) {
-            console.log("[Injected] 插件运行中，拦截window.print()调用")
-            return
-          }
-          console.log("[Injected] 插件未运行，正常调用window.print()")
-          return originalPrint.apply(this, args)
-        }
-        ;(window as any).__windowPrintIntercepted = true
-        console.log("[Injected] window.print()拦截器已设置")
-      }
-
-      // 拦截fetch请求
-      if (!(window as any).__printAPIIntercepted) {
-        const originalFetch = window.fetch
-        window.fetch = async function (...args: any[]) {
-          let url: string
-          if (typeof args[0] === "string") {
-            url = args[0]
-          } else if (args[0] instanceof Request) {
-            url = args[0].url
-          } else if (
-            args[0] &&
-            typeof args[0] === "object" &&
-            "url" in args[0]
-          ) {
-            url = String(args[0].url)
-          } else {
-            url = String(args[0])
-          }
-          const urlLower = url.toLowerCase()
-
-          const isPrintRequest =
-            urlLower.includes("print") ||
-            urlLower.includes("label") ||
-            urlLower.includes("packing") ||
-            urlLower.includes("shipping") ||
-            urlLower.includes("batchprint") ||
-            urlLower.includes("batch-print") ||
-            urlLower.includes("printlabel") ||
-            urlLower.includes("printboxmarks") ||
-            urlLower.includes("print-box-marks")
-
-          if (isPrintRequest) {
-            console.log("[Injected] 检测到打印接口请求:", url)
-
-            try {
-              const response = await originalFetch.apply(this, args)
-              const clonedResponse = response.clone()
-
-              clonedResponse
-                .text()
-                .then(async (text) => {
-                  try {
-                    let data
-                    try {
-                      data = JSON.parse(text)
-                    } catch {
-                      data = text
-                    }
-
-                    console.log("[Injected] 获取到打印接口返回的数据:", data)
-
-                    window.postMessage(
-                      {
-                        type: "PRINT_API_RESPONSE",
-                        source: "injected-script",
-                        data: {
-                          url: url,
-                          data: data,
-                          timestamp: Date.now()
-                        }
-                      },
-                      "*"
-                    )
-
-                    console.log(
-                      "[Injected] 已通过postMessage通知content script"
-                    )
-                  } catch (error) {
-                    console.error("[Injected] 处理打印接口响应失败:", error)
-                  }
-                })
-                .catch((error) => {
-                  console.error("[Injected] 读取打印接口响应失败:", error)
-                })
-
-              return response
-            } catch (error) {
-              console.error("[Injected] 拦截打印接口请求失败:", error)
-              return originalFetch.apply(this, args)
-            }
-          }
-
-          return originalFetch.apply(this, args)
-        }
-        ;(window as any).__printAPIIntercepted = true
-        console.log("[Injected] 打印接口拦截器已设置")
       }
     }
 
-    // 使用chrome.scripting.executeScript注入脚本到页面上下文
-    await chrome.scripting.executeScript({
-      target: { tabId: tabId },
-      func: injectInterceptor,
-      world: "MAIN"
-    })
-
-    console.log("[Background] 打印接口拦截脚本已成功注入")
-
-    return {
-      success: true,
-      message: "打印接口拦截脚本已注入"
-    }
+    return null
   } catch (error: any) {
-    console.error("[Background] handleInjectPrintInterceptor 发生错误:", error)
-    throw error
-  }
-}
-
-interface TableRowData {
-  index: number
-  stockOrderNo: string
-  processed?: boolean
-}
-
-interface BatchDownloadData {
-  tableData: Record<string, TableRowData>
-  currentUrl: string
-}
-
-async function handleStartBatchDownload(
-  tabId: number | undefined,
-  data: BatchDownloadData
-): Promise<{ success: boolean; message: string }> {
-  try {
-    if (!tabId) {
-      throw new Error("无法获取标签页ID")
-    }
-
-    const stockOrderNos = Object.keys(data.tableData)
-    console.log(`[Background] 开始批量下载，共 ${stockOrderNos.length} 行数据`)
-
-    await chrome.storage.local.set({
-      batchDownloadData: data
-    })
-
-    console.log("[Background] 已保存批量下载数据到 storage")
-
-    const firstStockOrderNo = stockOrderNos[0]
-
-    const response = await chrome.tabs.sendMessage(tabId, {
-      type: "PROCESS_NEXT_ROW",
-      data: {
-        stockOrderNo: firstStockOrderNo
-      }
-    })
-
-    if (response && response.success) {
-      console.log(`[Background] 已发送处理备货单号 ${firstStockOrderNo} 的请求`)
-    }
-
-    return {
-      success: true,
-      message: "批量下载已启动"
-    }
-  } catch (error: any) {
-    console.error("[Background] handleStartBatchDownload 发生错误:", error)
-    throw error
-  }
-}
-
-async function handleProcessNextRow(
-  tabId: number | undefined,
-  data: { stockOrderNo: string }
-): Promise<{ success: boolean; message: string }> {
-  try {
-    if (!tabId) {
-      throw new Error("无法获取标签页ID")
-    }
-
-    const storedData = await chrome.storage.local.get("batchDownloadData")
-
-    if (!storedData || !storedData.batchDownloadData) {
-      console.log("[Background] 未找到批量下载数据，批量下载已完成或未启动")
-      return {
-        success: true,
-        message: "批量下载已完成"
-      }
-    }
-
-    const batchData = storedData.batchDownloadData as BatchDownloadData
-    const stockOrderNo = data.stockOrderNo
-
-    if (!stockOrderNo || !batchData.tableData[stockOrderNo]) {
-      console.log("[Background] 备货单号不存在，批量下载已完成")
-      await chrome.storage.local.remove("batchDownloadData")
-      return {
-        success: true,
-        message: "所有行已处理完成"
-      }
-    }
-
-    const currentRow = batchData.tableData[stockOrderNo]
-    const stockOrderNos = Object.keys(batchData.tableData)
-    const currentIndex = stockOrderNos.indexOf(stockOrderNo)
-    console.log(
-      `[Background] 处理第 ${currentIndex + 1}/${stockOrderNos.length} 行，备货单号: ${stockOrderNo}`
+    console.error(
+      `[Background] 转发消息到content script失败 (${messageType}):`,
+      error
     )
-
-    const response = await chrome.tabs.sendMessage(tabId, {
-      type: "EXECUTE_PROCESS_ROW",
-      data: {
-        stockOrderNo: stockOrderNo
-      }
-    })
-
-    if (!response || !response.success) {
-      console.error(`[Background] 备货单号 ${stockOrderNo} 处理失败`)
-      return {
-        success: false,
-        message: "行处理失败"
-      }
-    }
-
-    console.log(
-      `[Background] 备货单号 ${stockOrderNo} 处理成功，等待页面刷新...`
-    )
-
-    // 标记当前行为已处理
-    batchData.tableData[stockOrderNo].processed = true
-    await chrome.storage.local.set({
-      batchDownloadData: batchData
-    })
-    console.log(`[Background] 已标记备货单号 ${stockOrderNo} 为已处理`)
-
-    const waitTime = 5000
-    console.log(`[Background] 等待 ${waitTime / 1000} 秒...`)
-    await new Promise((resolve) => setTimeout(resolve, waitTime))
-
-    // 查找下一个未处理的备货单号
-    let nextStockOrderNo: string | null = null
-    for (const no of stockOrderNos) {
-      if (!batchData.tableData[no].processed) {
-        nextStockOrderNo = no
-        break
-      }
-    }
-
-    if (!nextStockOrderNo) {
-      console.log("[Background] 所有行已处理完成")
-      await chrome.storage.local.remove("batchDownloadData")
-      return {
-        success: true,
-        message: "所有行已处理完成"
-      }
-    }
-
-    const nextIndex = stockOrderNos.indexOf(nextStockOrderNo)
-    console.log(
-      `[Background] 准备处理第 ${nextIndex + 1}/${stockOrderNos.length} 行，备货单号: ${nextStockOrderNo}`
-    )
-
-    await chrome.tabs.sendMessage(tabId, {
-      type: "PROCESS_NEXT_ROW",
-      data: {
-        stockOrderNo: nextStockOrderNo
-      }
-    })
-
-    console.log("[Background] 已发送处理下一行的请求")
-    return {
-      success: true,
-      message: "继续处理下一行"
-    }
-  } catch (error: any) {
-    console.error("[Background] handleProcessNextRow 发生错误:", error)
     throw error
   }
 }

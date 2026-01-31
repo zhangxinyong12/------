@@ -1,9 +1,12 @@
-import { findDom, findButtonByText, sleep } from "../utils/dom"
+import { setPluginRunningStatus } from "../content"
+import { findButtonByText, findDom, sleep } from "../utils/dom"
 
 export async function executeShipmentProcess(
   warehouse: string,
   shippingMethod: string
 ): Promise<boolean> {
+  setPluginRunningStatus(true)
+
   try {
     console.log(
       `[ShippingProcess] 开始执行完整发货流程，仓库: ${warehouse}，发货方式: ${shippingMethod}`
@@ -48,6 +51,8 @@ export async function executeShipmentProcess(
   } catch (error: any) {
     console.error("[ShippingProcess] 执行发货流程时发生错误:", error)
     return false
+  } finally {
+    setPluginRunningStatus(false)
   }
 }
 
@@ -103,7 +108,9 @@ async function clickCreateShippingOrderButton() {
     )
 
     if (confirmButton) {
-      console.log('[ShippingProcess] 找到"发货数一致，继续创建"按钮，准备点击...')
+      console.log(
+        '[ShippingProcess] 找到"发货数一致，继续创建"按钮，准备点击...'
+      )
       confirmButton.click()
       console.log('[ShippingProcess] 已点击"发货数一致，继续创建"按钮')
       await sleep(3000)
@@ -141,7 +148,10 @@ async function clickCreateShippingOrderButton() {
     }
   }
 
-  console.warn("[ShippingProcess] 未知弹窗类型，弹窗文本:", modalText.substring(0, 100))
+  console.warn(
+    "[ShippingProcess] 未知弹窗类型，弹窗文本:",
+    modalText.substring(0, 100)
+  )
   await sleep(3000)
   await sleep(3000)
   return true
@@ -157,7 +167,9 @@ async function selectWarehouseInCreatePage(warehouse: string) {
     const label = radio.closest("label")?.textContent || ""
     const text = label.trim()
 
-    console.log(`[ShippingProcess] 检查仓库选项: "${text}"，目标仓库: "${warehouse}"`)
+    console.log(
+      `[ShippingProcess] 检查仓库选项: "${text}"，目标仓库: "${warehouse}"`
+    )
 
     if (text.includes(warehouse)) {
       console.log(`[ShippingProcess] 找到匹配的仓库选项: ${text}`)
@@ -251,17 +263,23 @@ async function clickBatchSelectAndChooseWarehouseInCreatePage(
   let warehouseOptions: NodeListOf<Element> | null = null
   if (listbox) {
     warehouseOptions = listbox.querySelectorAll('li[role="option"]')
-    console.log(`[ShippingProcess] 在listbox中找到 ${warehouseOptions.length} 个选项`)
+    console.log(
+      `[ShippingProcess] 在listbox中找到 ${warehouseOptions.length} 个选项`
+    )
   }
 
   if (!warehouseOptions || warehouseOptions.length === 0) {
     warehouseOptions = dropdown.querySelectorAll('li[role="option"]')
-    console.log(`[ShippingProcess] 在dropdown中找到 ${warehouseOptions.length} 个选项`)
+    console.log(
+      `[ShippingProcess] 在dropdown中找到 ${warehouseOptions.length} 个选项`
+    )
   }
 
   if (!warehouseOptions || warehouseOptions.length === 0) {
     warehouseOptions = document.querySelectorAll('li[role="option"]')
-    console.log(`[ShippingProcess] 在document中找到 ${warehouseOptions.length} 个选项`)
+    console.log(
+      `[ShippingProcess] 在document中找到 ${warehouseOptions.length} 个选项`
+    )
   }
 
   let targetWarehouseName = ""
@@ -280,7 +298,9 @@ async function clickBatchSelectAndChooseWarehouseInCreatePage(
     return false
   }
 
-  console.log(`[ShippingProcess] 最终找到 ${warehouseOptions.length} 个仓库选项`)
+  console.log(
+    `[ShippingProcess] 最终找到 ${warehouseOptions.length} 个仓库选项`
+  )
 
   Array.from(warehouseOptions).forEach((option, index) => {
     const text = option.textContent?.trim() || ""
@@ -293,7 +313,9 @@ async function clickBatchSelectAndChooseWarehouseInCreatePage(
     const optionText = optionElement.textContent?.trim() || ""
     const isChecked = option.getAttribute("data-checked") === "true"
 
-    console.log(`[ShippingProcess] 检查仓库选项: "${optionText}", 已选中: ${isChecked}`)
+    console.log(
+      `[ShippingProcess] 检查仓库选项: "${optionText}", 已选中: ${isChecked}`
+    )
 
     if (optionText === targetWarehouseName) {
       console.log(`[ShippingProcess] ✅ 找到匹配的仓库选项: ${optionText}`)
@@ -313,7 +335,9 @@ async function clickBatchSelectAndChooseWarehouseInCreatePage(
   }
 
   if (!found) {
-    console.warn(`[ShippingProcess] ⚠️ 未找到匹配的仓库选项: ${targetWarehouseName}`)
+    console.warn(
+      `[ShippingProcess] ⚠️ 未找到匹配的仓库选项: ${targetWarehouseName}`
+    )
     return false
   }
 
