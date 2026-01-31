@@ -389,6 +389,47 @@ const PopupPage: React.FC = () => {
   }
 
   /**
+   * 打开发货台页面并执行完整自动化流程
+   * 1. 跳转到发货台 URL
+   * 2. 等待页面加载
+   * 3. 自动刷新表格
+   * 4. 全选订单
+   * 5. 提取数据并保存
+   */
+  const handleOpenShippingDesk = async () => {
+    setLoading(true)
+
+    try {
+      const values = form.getFieldsValue()
+
+      // 发送消息到 background，打开发货台页面
+      const response = await chrome.runtime.sendMessage({
+        type: "OPEN_SHIPPING_DESK",
+        data: {
+          warehouse: values.warehouse || "义乌仓库",
+          shippingMethod: values.shippingMethod || "自送",
+          product: values.product || "0.2亚克力",
+          url: "https://seller.kuajingmaihuo.com/main/order-manager/shipping-desk"
+        }
+      })
+
+      if (response && response.success) {
+        message.success("已打开发货台页面，将自动执行流程...")
+      } else {
+        const errorMsg = response?.error || "操作失败，未收到有效响应"
+        throw new Error(errorMsg)
+      }
+    } catch (error: any) {
+      const errorMessage =
+        error?.message || chrome.runtime.lastError?.message || "操作失败"
+      console.error("[Popup] 打开发货台页面失败:", error)
+      message.error(`操作失败: ${errorMessage}`)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  /**
    * 处理表单提交
    * 开始批量自动发货
    * 保存用户配置到 background，并打开新窗口
@@ -497,9 +538,9 @@ const PopupPage: React.FC = () => {
           onFinish={handleSubmit}
           autoComplete="off"
           initialValues={{
-            warehouse: "义乌仓库", // 默认选择义乌仓库
-            shippingMethod: "自送", // 默认选择自送方式
-            product: "" // 产品默认为空，需要用户选择
+            warehouse: "义乌仓库",
+            shippingMethod: "自送",
+            product: "0.2亚克力"
           }}>
           {/* 发货仓库选择 */}
           <Form.Item
@@ -551,53 +592,15 @@ const PopupPage: React.FC = () => {
             </Select>
           </Form.Item>
 
-          {/* 提交按钮 */}
+          {/* 打开发货台按钮 */}
           <Form.Item>
             <Button
               type="primary"
-              htmlType="submit"
-              icon={<SendOutlined />}
+              onClick={handleOpenShippingDesk}
               loading={loading}
               block
               size="large">
-              开始批量自动发货
-            </Button>
-          </Form.Item>
-
-          {/* 直接执行发货步骤按钮（开发阶段测试用） */}
-          {/* 注意：这是开发阶段的功能，正式版本应该从第一步开始执行完整流程 */}
-          <Form.Item>
-            <Button
-              type="default"
-              onClick={handleDirectShipment}
-              loading={loading}
-              block
-              size="large">
-              直接执行发货步骤（开发测试用）
-            </Button>
-          </Form.Item>
-
-          {/* 待仓库收货测试按钮 */}
-          <Form.Item>
-            <Button
-              type="default"
-              onClick={handleTestWarehouseReceipt}
-              loading={loading}
-              block
-              size="large">
-              待仓库收货测试
-            </Button>
-          </Form.Item>
-
-          {/* 测试打印条码按钮 */}
-          <Form.Item>
-            <Button
-              type="default"
-              onClick={handleTestPrintBarcode}
-              loading={loading}
-              block
-              size="large">
-              测试打印条码
+              自动发货
             </Button>
           </Form.Item>
         </Form>

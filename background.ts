@@ -2,6 +2,7 @@
  * Background 脚本
  * 处理插件的后台逻辑和消息传递
  */
+import ExcelJS from "exceljs"
 
 // 用户配置类型定义
 interface UserConfig {
@@ -74,18 +75,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   // 处理保存发货台数据并下载图片的请求
-  if (message.type === "SAVE_SHIPPING_DESK_DATA_AND_DOWNLOAD_IMAGES") {
-    handleSaveShippingDeskDataAndDownloadImages(message.data)
-      .then((result) => {
-        sendResponse({ success: true, data: result })
-      })
-      .catch((error) => {
-        console.error("[Background] 保存数据并下载图片错误:", error)
-        sendResponse({ success: false, error: error.message })
-      })
-    return true // 保持消息通道开放以支持异步响应
-  }
-
   // 处理批量发货完成，准备跳转到发货台的通知
   if (message.type === "BATCH_SHIPMENT_COMPLETED") {
     handleBatchShipmentCompleted(sender.tab?.id)
@@ -255,6 +244,32 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true // 保持消息通道开放以支持异步响应
   }
 
+  // 处理打开发货台页面的请求
+  if (message.type === "OPEN_SHIPPING_DESK") {
+    handleOpenShippingDeskPage(message.data)
+      .then((result) => {
+        sendResponse({ success: true, data: result })
+      })
+      .catch((error) => {
+        console.error("[Background] 打开发货台页面错误:", error)
+        sendResponse({ success: false, error: error.message })
+      })
+    return true // 保持消息通道开放以支持异步响应
+  }
+
+  // 处理跳转到发货台页面的请求
+  if (message.type === "NAVIGATE_TO_SHIPPING_DESK") {
+    handleNavigateToShippingDesk(message.data)
+      .then((result) => {
+        sendResponse({ success: true, data: result })
+      })
+      .catch((error) => {
+        console.error("[Background] 跳转到发货台错误:", error)
+        sendResponse({ success: false, error: error.message })
+      })
+    return true // 保持消息通道开放以支持异步响应
+  }
+
   return false
 })
 
@@ -400,13 +415,17 @@ async function handleBatchShipment(data: {
 }
 
 /**
- * 保存发货台数据
- * 将content script提取的表格数据保存到storage
+ * 保存发货台数据并生成Excel表格
+ * 创建文件夹结构并生成Excel文件
  * @param data 包含分组数据的对象
  */
 async function handleSaveShippingDeskData(data: {
+  baseFolder: string
+  shopName: string
+  product: string
   groupedData: Array<{
     warehouse: string
+    product: string
     rows: Array<{
       stockOrderNo: string
       productCode: string
@@ -419,6 +438,66 @@ async function handleSaveShippingDeskData(data: {
   try {
     console.log("[Background] 保存发货台数据:", data)
 
+    const baseFolder = sanitizeFileName(data.baseFolder)
+    const shopName = sanitizeFileName(data.shopName)
+    const product = sanitizeFileName(data.product)
+
+    // 聚合货号数量
+    const productCodeQuantityMap = new Map<string, number>()
+
+    data.groupedData.forEach((group) => {
+      group.rows.forEach((row) => {
+        const currentQty = productCodeQuantityMap.get(row.productCode) || 0
+        productCodeQuantityMap.set(row.productCode, currentQty + row.quantity)
+      })
+    })
+
+    // 使用 ExcelJS 生成真正的 Excel 文件
+    const workbook = new ExcelJS.Workbook()
+    const worksheet = workbook.addWorksheet("发货清单")
+
+    // 添加表头
+    worksheet.columns = [
+      { header: "货号", key: "productCode", width: 20 },
+      { header: "图片", key: "image", width: 20 },
+      { header: "数量", key: "quantity", width: 15 }
+    ]
+
+    // 添加数据
+    productCodeQuantityMap.forEach((quantity, productCode) => {
+      worksheet.addRow({
+        productCode: productCode,
+        image: "",
+        quantity: quantity
+      })
+    })
+
+    // 设置表头样式
+    const headerRow = worksheet.getRow(1)
+    headerRow.font = { bold: true }
+    headerRow.fill = {
+      type: "pattern",
+      pattern: "solid",
+      fgColor: { argb: "FFE0E0E0" }
+    }
+
+    // 生成 Excel 文件
+    const excelBuffer = await workbook.xlsx.writeBuffer()
+    const blob = new Blob([excelBuffer], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    })
+    const excelUrl = URL.createObjectURL(blob)
+    const excelFilePath = `${baseFolder}/${shopName}/${product}/发货清单.xlsx`
+
+    await chrome.downloads.download({
+      url: excelUrl,
+      filename: excelFilePath,
+      saveAs: false,
+      conflictAction: "overwrite"
+    })
+
+    console.log(`[Background] Excel文件已保存: ${excelFilePath}`)
+
     // 保存到chrome.storage
     await chrome.storage.local.set({
       shippingDeskData: data.groupedData
@@ -427,7 +506,7 @@ async function handleSaveShippingDeskData(data: {
     console.log(
       "[Background] 发货台数据已保存，共",
       data.groupedData.length,
-      "个仓库"
+      "个分组"
     )
 
     return {
@@ -437,7 +516,8 @@ async function handleSaveShippingDeskData(data: {
       totalRows: data.groupedData.reduce(
         (sum, group) => sum + group.rows.length,
         0
-      )
+      ),
+      excelFilePath
     }
   } catch (error: any) {
     console.error("[Background] handleSaveShippingDeskData 发生错误:", error)
@@ -460,154 +540,6 @@ function sanitizeFileName(fileName: string): string {
  * 创建文件夹结构并批量下载图片
  * @param data 包含分组数据和下载信息的对象
  */
-async function handleSaveShippingDeskDataAndDownloadImages(data: {
-  baseFolder: string // JIT+日期，如JIT20260124
-  shopName: string // 店铺名称
-  groupedData: Array<{
-    warehouse: string // 仓库名称
-    rows: Array<{
-      stockOrderNo: string
-      productCode: string
-      warehouse: string
-      skuId: string
-      quantity: number
-      imageUrl: string // 图片URL（已去除参数）
-      fileName: string // 文件名（货号）
-    }>
-  }>
-  dataRecordList: Array<{
-    stockOrderNo: string // 备货单号
-    productCode: string // 货号
-    warehouse: string // 收货仓库
-    skuId: string // SKU ID
-    quantity: number // 数量
-    imageUrl: string // 图片URL（原始URL，已去除参数）
-    imageFileName: string // 图片文件名（货号.jpg）
-    imageFilePath: string // 图片完整路径
-    shopName: string // 店铺名称
-    downloadDate: string // 下载日期
-  }>
-}) {
-  try {
-    console.log("[Background] 开始保存数据并下载图片:", data)
-
-    // 保存分组数据到storage
-    await chrome.storage.local.set({
-      shippingDeskData: data.groupedData
-    })
-
-    console.log(
-      "[Background] 发货台数据已保存，共",
-      data.groupedData.length,
-      "个仓库"
-    )
-
-    // 保存数据记录列表到storage
-    // 获取现有的记录列表，追加新数据
-    const existingRecords = await chrome.storage.local.get(
-      "shippingDeskDataRecordList"
-    )
-    const existingList = existingRecords.shippingDeskDataRecordList || []
-
-    // 将新记录追加到现有列表
-    const updatedList = [...existingList, ...data.dataRecordList]
-
-    await chrome.storage.local.set({
-      shippingDeskDataRecordList: updatedList
-    })
-
-    console.log(
-      `[Background] 数据记录列表已保存，本次新增 ${data.dataRecordList.length} 条，总计 ${updatedList.length} 条记录`
-    )
-
-    // 清理文件夹名称和文件名
-    const baseFolder = sanitizeFileName(data.baseFolder)
-    const shopName = sanitizeFileName(data.shopName)
-
-    // 开始下载图片
-    let totalImages = 0
-    let downloadedImages = 0
-
-    // 使用Set来记录已下载的SKU，确保每个SKU只下载一次
-    const downloadedSkus = new Set<string>()
-
-    // 遍历每个仓库
-    for (const warehouseGroup of data.groupedData) {
-      const warehouse = sanitizeFileName(warehouseGroup.warehouse)
-
-      // 遍历该仓库的每一行
-      for (const row of warehouseGroup.rows) {
-        if (!row.imageUrl || !row.fileName) {
-          console.warn(`[Background] 跳过无效数据:`, row)
-          continue
-        }
-
-        // 检查该SKU是否已经下载过
-        if (downloadedSkus.has(row.fileName)) {
-          console.log(`[Background] SKU ${row.fileName} 已下载过，跳过`)
-          continue
-        }
-
-        totalImages++
-
-        try {
-          // 构建文件路径：baseFolder/shopName/warehouse/fileName.jpg
-          // Chrome下载API使用正斜杠作为路径分隔符，会自动创建文件夹
-          const fileName = sanitizeFileName(row.fileName)
-          const filePath = `${baseFolder}/${shopName}/${warehouse}/${fileName}.jpg`
-
-          console.log(
-            `[Background] 下载图片 (${downloadedImages + 1}/${totalImages}): ${row.imageUrl} -> ${filePath}`
-          )
-
-          // 使用Chrome下载API下载图片
-          // 使用conflictAction: 'overwrite'确保使用指定的文件名，而不是URL中的文件名
-          await chrome.downloads.download({
-            url: row.imageUrl,
-            filename: filePath,
-            saveAs: false, // 不弹出保存对话框，直接下载
-            conflictAction: "overwrite" // 如果文件已存在，覆盖它，确保使用我们指定的文件名
-          })
-
-          // 记录已下载的SKU
-          downloadedSkus.add(row.fileName)
-          downloadedImages++
-
-          // 添加延迟，避免下载过快导致请求失败
-          await new Promise((resolve) => setTimeout(resolve, 300))
-        } catch (downloadError: any) {
-          console.error(
-            `[Background] 下载图片失败 (${row.fileName}):`,
-            downloadError
-          )
-        }
-      }
-    }
-
-    console.log(`[Background] 图片下载完成: ${downloadedImages}/${totalImages}`)
-
-    return {
-      success: true,
-      message: "数据已保存，图片下载已开始",
-      warehouseCount: data.groupedData.length,
-      totalRows: data.groupedData.reduce(
-        (sum, group) => sum + group.rows.length,
-        0
-      ),
-      totalImages,
-      downloadedImages,
-      recordListCount: updatedList.length, // 记录列表总数
-      newRecordCount: data.dataRecordList.length // 本次新增记录数
-    }
-  } catch (error: any) {
-    console.error(
-      "[Background] handleSaveShippingDeskDataAndDownloadImages 发生错误:",
-      error
-    )
-    throw error
-  }
-}
-
 /**
  * 处理批量发货完成，准备跳转到发货台
  * Content Script 完成批量发货后通知 Background，Background 监听页面跳转到发货台后，等待3秒再发送执行任务的消息
@@ -713,6 +645,7 @@ async function handleBatchShipmentCompleted(tabId: number) {
 async function handleOpenShippingDeskPage(data: {
   warehouse: string
   shippingMethod: string
+  product: string
   url: string
 }) {
   try {
@@ -723,11 +656,10 @@ async function handleOpenShippingDeskPage(data: {
       url: data.url,
       type: "normal",
       focused: true,
-      width: 1200, // 窗口宽度
-      height: 800 // 窗口高度
+      width: 1200,
+      height: 800
     })
 
-    // 获取新窗口中的标签页ID
     const tabs = await chrome.tabs.query({ windowId: newWindow.id })
     const newTabId = tabs[0]?.id
 
@@ -737,54 +669,44 @@ async function handleOpenShippingDeskPage(data: {
 
     console.log(`[Background] 已打开发货台页面，标签页ID: ${newTabId}`)
 
-    // 监听标签页更新事件，等待页面加载完成
-    // 当页面加载完成且URL匹配时，等待3秒后通知content script执行任务
     chrome.tabs.onUpdated.addListener(
       function listener(tabId, changeInfo, tab) {
-        // 检查是否是目标标签页
         if (tabId !== newTabId) {
           return
         }
 
-        // 检查URL是否匹配（支持URL包含目标域名的情况）
-        const targetUrl = data.url
         const currentUrl = tab.url || ""
         const isUrlMatch =
           currentUrl.includes("seller.kuajingmaihuo.com") &&
           currentUrl.includes("/main/order-manager/shipping-desk")
 
-        // 当页面加载完成且URL匹配时
         if (changeInfo.status === "complete" && isUrlMatch) {
           console.log(
             `[Background] 检测到发货台页面加载完成，URL: ${currentUrl}`
           )
 
-          // 移除监听器，避免重复执行
           chrome.tabs.onUpdated.removeListener(listener)
 
-          // 等待3秒后，向content script发送消息，通知开始执行发货台任务
           setTimeout(async () => {
             try {
               console.log(
                 "[Background] 等待3秒后，通知content script开始执行发货台任务"
               )
 
-              // 获取用户配置
               const config = await getUserConfig()
 
-              // 向content script发送消息
               const response = await chrome.tabs.sendMessage(tabId, {
                 type: "START_SHIPPING_DESK_TASK",
                 data: {
                   warehouse: config?.warehouse || data.warehouse,
-                  shippingMethod: config?.shippingMethod || data.shippingMethod
+                  shippingMethod: config?.shippingMethod || data.shippingMethod,
+                  product: data.product
                 }
               })
 
               console.log("[Background] Content script响应:", response)
             } catch (error: any) {
               console.error("[Background] 发送消息到content script失败:", error)
-              // 如果content script还未注入，可以尝试重试
               if (error.message?.includes("Could not establish connection")) {
                 console.log(
                   "[Background] Content script可能还未注入，将在1秒后重试..."
@@ -797,7 +719,8 @@ async function handleOpenShippingDeskPage(data: {
                       data: {
                         warehouse: config?.warehouse || data.warehouse,
                         shippingMethod:
-                          config?.shippingMethod || data.shippingMethod
+                          config?.shippingMethod || data.shippingMethod,
+                        product: data.product
                       }
                     })
                   } catch (retryError) {
@@ -806,7 +729,7 @@ async function handleOpenShippingDeskPage(data: {
                 }, 1000)
               }
             }
-          }, 3000) // 等待3秒
+          }, 3000)
         }
       }
     )
@@ -819,6 +742,41 @@ async function handleOpenShippingDeskPage(data: {
     }
   } catch (error: any) {
     console.error("[Background] handleOpenShippingDeskPage 发生错误:", error)
+    throw error
+  }
+}
+
+/**
+ * 跳转到发货台页面（用于多仓库处理过程中的页面导航）
+ * @param data 包含要跳转的URL
+ */
+async function handleNavigateToShippingDesk(data: { url: string }) {
+  try {
+    console.log("[Background] 准备跳转到发货台页面:", data.url)
+
+    // 获取当前活动标签页
+    const [tab] = await chrome.tabs.query({
+      active: true,
+      currentWindow: true
+    })
+
+    if (!tab) {
+      throw new Error("无法获取当前活动标签页")
+    }
+
+    const tabId = tab.id
+    console.log(`[Background] 当前标签页ID: ${tabId}`)
+
+    // 更新标签页URL，导航到发货台
+    await chrome.tabs.update(tabId, { url: data.url })
+
+    return {
+      success: true,
+      message: "正在跳转到发货台页面",
+      tabId: tabId
+    }
+  } catch (error: any) {
+    console.error("[Background] handleNavigateToShippingDesk 发生错误:", error)
     throw error
   }
 }

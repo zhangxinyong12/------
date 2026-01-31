@@ -17,6 +17,7 @@
     "@ant-design/icons": "^5.2.6",
     "@plasmohq/storage": "^1.15.0",
     "antd": "^5.12.8",
+    "exceljs": "^4.4.0",
     "html2canvas": "^1.4.1",
     "jspdf": "^2.5.1",
     "plasmo": "0.90.5",
